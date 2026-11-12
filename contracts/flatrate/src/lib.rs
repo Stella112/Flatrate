@@ -5,6 +5,14 @@
 //! build on this file.
 
 use flatrate_shared as math;
+use near_contract_standards::non_fungible_token::events::{NftBurn, NftMint};
+use near_contract_standards::non_fungible_token::metadata::{
+    NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
+};
+use near_contract_standards::non_fungible_token::{
+    NonFungibleToken, NonFungibleTokenEnumeration, NonFungibleTokenResolver, Token, TokenId,
+};
+use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde_json::{self, json};
 use near_sdk::store::{LookupMap, Vector};
@@ -40,6 +48,50 @@ enum StorageKey {
     Bids,
     BidIndex,
     Refunds,
+    NftOwners,
+    NftMetadata,
+    NftEnumeration,
+    Notes,
+}
+
+/// Claims held inside a Cover Note NFT. They pay whoever owns the token at redemption.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct Note {
+    pub market_id: U64,
+    pub side: Side,
+    /// Claim units (6 decimals).
+    pub amount: U128,
+}
+
+/// `YYYY-MM-DD` (UTC) for a ns timestamp (Howard Hinnant's civil-from-days).
+fn utc_date(ns: u64) -> String {
+    let z = (ns / 1_000_000_000 / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Claim units as whole claims, without trailing zeros: 100_000_000 -> "100", 1_500_000 -> "1.5".
+fn claims_str(units: u128) -> String {
+    let whole = units / CLAIM_UNITS;
+    let frac = units % CLAIM_UNITS;
+    if frac == 0 {
+        whole.to_string()
+    } else {
+        let f = format!("{frac:06}");
+        format!("{whole}.{}", f.trim_end_matches('0'))
+    }
+}
+
+fn usd_str(micros: u64) -> String {
+    format!("${}.{:02}", micros / 1_000_000, (micros % 1_000_000) / 10_000)
 }
 
 /// A sealed bid. `hash = sha256(borsh(market_id: u64, side: Side, qty: u64, limit_cents: u8,
@@ -348,6 +400,39 @@ pub struct Contract {
     bid_index: LookupMap<(u64, AccountId, [u8; 32]), u32>,
     /// fUSD owed back to an account (unused auction escrow), withdrawn with `withdraw_refund`.
     refunds: LookupMap<AccountId, u128>,
+    /// Cover Notes (NEP-171 core, NEP-177 metadata, NEP-181 enumeration).
+    tokens: NonFungibleToken,
+    notes: LookupMap<TokenId, Note>,
+    next_note_id: u64,
+}
+
+/// State layout before Phase 4 (deployed 2026-11-12), read once by `migrate`.
+#[near(serializers = [borsh])]
+struct ContractV2 {
+    owner_id: AccountId,
+    fusd_id: AccountId,
+    outlayer_id: AccountId,
+    oracle_project_id: String,
+    oracle_version_key: String,
+    oracle_sources: Vec<String>,
+    resource_limits: ResourceLimits,
+    markets: Vector<Market>,
+    claims: LookupMap<ClaimKey, u128>,
+    pending: LookupMap<u64, PendingObservation>,
+    next_pending_id: u64,
+    bids: LookupMap<(u64, u32), Bid>,
+    bid_index: LookupMap<(u64, AccountId, [u8; 32]), u32>,
+    refunds: LookupMap<AccountId, u128>,
+}
+
+fn new_tokens(owner_id: AccountId) -> NonFungibleToken {
+    NonFungibleToken::new(
+        StorageKey::NftOwners,
+        owner_id,
+        Some(StorageKey::NftMetadata),
+        Some(StorageKey::NftEnumeration),
+        None::<StorageKey>,
+    )
 }
 
 fn emit(event: &str, data: serde_json::Value) {
@@ -372,6 +457,9 @@ impl Contract {
         require!(!oracle_version_key.is_empty(), "ERR_EMPTY_VERSION");
         require!(oracle_sources.len() >= MIN_SOURCES_OK as usize, "ERR_TOO_FEW_SOURCES");
         Self {
+            tokens: new_tokens(owner_id.clone()),
+            notes: LookupMap::new(StorageKey::Notes),
+            next_note_id: 0,
             owner_id,
             fusd_id,
             outlayer_id,
@@ -386,6 +474,34 @@ impl Contract {
             bids: LookupMap::new(StorageKey::Bids),
             bid_index: LookupMap::new(StorageKey::BidIndex),
             refunds: LookupMap::new(StorageKey::Refunds),
+        }
+    }
+
+    /// One-time upgrade from the Phase 2 state layout: keeps every market, claim, bid and
+    /// refund and adds the empty Cover Note collections. Only the contract account can call it,
+    /// as part of a deploy with full-access keys (before the contract goes keyless).
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let old: ContractV2 = env::state_read().unwrap_or_else(|| env::panic_str("ERR_NO_STATE"));
+        Self {
+            tokens: new_tokens(old.owner_id.clone()),
+            notes: LookupMap::new(StorageKey::Notes),
+            next_note_id: 0,
+            owner_id: old.owner_id,
+            fusd_id: old.fusd_id,
+            outlayer_id: old.outlayer_id,
+            oracle_project_id: old.oracle_project_id,
+            oracle_version_key: old.oracle_version_key,
+            oracle_sources: old.oracle_sources,
+            resource_limits: old.resource_limits,
+            markets: old.markets,
+            claims: old.claims,
+            pending: old.pending,
+            next_pending_id: old.next_pending_id,
+            bids: old.bids,
+            bid_index: old.bid_index,
+            refunds: old.refunds,
         }
     }
 
@@ -920,6 +1036,132 @@ impl Contract {
         false
     }
 
+    // ---------- Cover Notes (NEP-171) ----------
+
+    /// Moves `amount` of the caller's claims into a new Cover Note NFT owned by the caller.
+    /// While the market is open. The note pays whoever holds it after settlement.
+    pub fn wrap_note(&mut self, market_id: U64, side: Side, amount: U128) -> Token {
+        let owner = env::predecessor_account_id();
+        let m = self.market(market_id.0);
+        require!(m.status == MarketStatus::Open, "ERR_MARKET_NOT_OPEN");
+        require!(amount.0 > 0, "ERR_ZERO_AMOUNT");
+        self.sub_claim(market_id.0, side, &owner, amount.0);
+
+        let token_id: TokenId = self.next_note_id.to_string();
+        self.next_note_id += 1;
+        let side_str = match side {
+            Side::Long => "Long",
+            Side::Short => "Short",
+        };
+        let amt = claims_str(amount.0);
+        let period_end = utc_date(m.period_end);
+        let metadata = TokenMetadata {
+            title: Some(format!("Cover Note #{token_id}: {amt} {side_str}, H100, period ending {period_end}")),
+            description: Some(format!(
+                "Holds {amt} {side_str} claims of Flatrate market {} (H100 per GPU-hour, floor {}, cap {}). \
+                 After settlement the holder redeems it for fUSD.",
+                m.id,
+                usd_str(m.floor_micros),
+                usd_str(m.cap_micros)
+            )),
+            media: None,
+            media_hash: None,
+            copies: Some(1),
+            issued_at: Some((env::block_timestamp() / 1_000_000).to_string()),
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: Some(
+                json!({"market_id": U64(m.id), "side": side, "amount": amount, "index": m.index.as_str(),
+                       "floor_micros": U64(m.floor_micros), "cap_micros": U64(m.cap_micros),
+                       "period_end": U64(m.period_end)})
+                .to_string(),
+            ),
+            reference: None,
+            reference_hash: None,
+        };
+        let token = self.tokens.internal_mint_with_refund(token_id.clone(), owner.clone(), Some(metadata), None);
+        self.notes.insert(token_id.clone(), Note { market_id, side, amount });
+        NftMint { owner_id: &owner, token_ids: &[&token_id], memo: None }.emit();
+        emit("note_wrapped", json!({"token_id": token_id, "owner": owner, "market_id": market_id, "side": side, "amount": amount}));
+        token
+    }
+
+    /// Before settlement: the owner gets the claims back and the note is burned.
+    pub fn unwrap_note(&mut self, token_id: TokenId) -> U128 {
+        let (owner, note) = self.note_for_owner(&token_id);
+        let m = self.market(note.market_id.0);
+        require!(m.status == MarketStatus::Open, "ERR_ALREADY_SETTLED");
+        self.burn_note(&token_id, &owner);
+        self.add_claim(note.market_id.0, note.side, &owner, note.amount.0);
+        emit("note_unwrapped", json!({"token_id": token_id, "owner": owner, "amount": note.amount}));
+        note.amount
+    }
+
+    /// After settlement: pays the note's claims to the current owner in fUSD and burns it.
+    pub fn redeem_note(&mut self, token_id: TokenId) -> U128 {
+        let (owner, note) = self.note_for_owner(&token_id);
+        let mut m = self.market(note.market_id.0);
+        let p = match m.status {
+            MarketStatus::Settled { long_payout_micros } => math::Payoff {
+                long_micros: long_payout_micros,
+                short_micros: math::PAIR_MICROS - long_payout_micros,
+            },
+            MarketStatus::Void => math::VOID_PAYOFF,
+            _ => env::panic_str("ERR_NOT_SETTLED"),
+        };
+        let per_claim = match note.side {
+            Side::Long => p.long_micros,
+            Side::Short => p.short_micros,
+        };
+        let amount = math::redeem_amount(note.amount.0, per_claim);
+        self.burn_note(&token_id, &owner);
+        m.collateral -= amount;
+        self.save(m);
+        emit("note_redeemed", json!({"token_id": token_id, "owner": owner, "amount": U128(amount)}));
+        if amount > 0 {
+            // If the transfer fails, the claims go back to the owner's ledger balance.
+            let (rl, rs) = match note.side {
+                Side::Long => (note.amount.0, 0),
+                Side::Short => (0, note.amount.0),
+            };
+            self.pay(owner, note.market_id.0, amount, rl, rs, 0);
+        }
+        U128(amount)
+    }
+
+    /// The note behind a Cover Note token.
+    pub fn note_info(&self, token_id: TokenId) -> Option<Note> {
+        self.notes.get(&token_id).cloned()
+    }
+
+    /// Owner check first, so a caller who does not own the note always sees `ERR_NOT_OWNER`.
+    fn note_for_owner(&self, token_id: &TokenId) -> (AccountId, Note) {
+        let owner = self.tokens.owner_by_id.get(token_id).unwrap_or_else(|| env::panic_str("ERR_NO_NOTE"));
+        require!(env::predecessor_account_id() == owner, "ERR_NOT_OWNER");
+        let note = self.notes.get(token_id).cloned().unwrap_or_else(|| env::panic_str("ERR_NO_NOTE"));
+        (owner, note)
+    }
+
+    fn burn_note(&mut self, token_id: &TokenId, owner: &AccountId) {
+        self.tokens.owner_by_id.remove(token_id);
+        if let Some(meta) = self.tokens.token_metadata_by_id.as_mut() {
+            meta.remove(token_id);
+        }
+        if let Some(per_owner) = self.tokens.tokens_per_owner.as_mut() {
+            if let Some(mut set) = per_owner.get(owner) {
+                set.remove(token_id);
+                if set.is_empty() {
+                    per_owner.remove(owner);
+                } else {
+                    per_owner.insert(owner, &set);
+                }
+            }
+        }
+        self.notes.remove(token_id);
+        NftBurn { owner_id: owner, token_ids: &[token_id], authorized_id: None, memo: None }.emit();
+    }
+
     // ---------- views ----------
 
     pub fn get_config(&self) -> ConfigView {
@@ -1029,6 +1271,80 @@ impl Contract {
     }
 }
 
+// ---------- NEP-171 / NEP-177 / NEP-181 ----------
+
+#[near]
+impl NonFungibleTokenCore for Contract {
+    #[payable]
+    fn nft_transfer(&mut self, receiver_id: AccountId, token_id: TokenId, approval_id: Option<u64>, memo: Option<String>) {
+        self.tokens.nft_transfer(receiver_id, token_id, approval_id, memo)
+    }
+
+    #[payable]
+    fn nft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approval_id: Option<u64>,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<bool> {
+        self.tokens.nft_transfer_call(receiver_id, token_id, approval_id, memo, msg)
+    }
+
+    fn nft_token(&self, token_id: TokenId) -> Option<Token> {
+        self.tokens.nft_token(token_id)
+    }
+}
+
+#[near]
+impl NonFungibleTokenResolver for Contract {
+    #[private]
+    fn nft_resolve_transfer(
+        &mut self,
+        previous_owner_id: AccountId,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approved_account_ids: Option<std::collections::HashMap<AccountId, u64>>,
+    ) -> bool {
+        self.tokens.nft_resolve_transfer(previous_owner_id, receiver_id, token_id, approved_account_ids)
+    }
+}
+
+#[near]
+impl NonFungibleTokenEnumeration for Contract {
+    fn nft_total_supply(&self) -> U128 {
+        self.tokens.nft_total_supply()
+    }
+
+    fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
+        self.tokens.nft_tokens(from_index, limit)
+    }
+
+    fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
+        self.tokens.nft_supply_for_owner(account_id)
+    }
+
+    fn nft_tokens_for_owner(&self, account_id: AccountId, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
+        self.tokens.nft_tokens_for_owner(account_id, from_index, limit)
+    }
+}
+
+#[near]
+impl NonFungibleTokenMetadataProvider for Contract {
+    fn nft_metadata(&self) -> NFTContractMetadata {
+        NFTContractMetadata {
+            spec: NFT_METADATA_SPEC.to_string(),
+            name: "Flatrate Cover Note".to_string(),
+            symbol: "FLATNOTE".to_string(),
+            icon: None,
+            base_uri: None,
+            reference: None,
+            reference_hash: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1042,6 +1358,19 @@ mod tests {
         assert_eq!(hex_decode_32(&s.to_uppercase()), Some(h));
         assert_eq!(hex_decode_32(&s[..62]), None);
         assert_eq!(hex_decode_32(&format!("zz{}", &s[2..])), None);
+    }
+
+    #[test]
+    fn note_title_helpers() {
+        // 2026-11-21 00:00:00 UTC
+        assert_eq!(utc_date(1_795_219_200_000_000_000), "2026-11-21");
+        assert_eq!(utc_date(0), "1970-01-01");
+        assert_eq!(utc_date(951_782_400_000_000_000), "2000-02-29");
+        assert_eq!(claims_str(100_000_000), "100");
+        assert_eq!(claims_str(1_500_000), "1.5");
+        assert_eq!(claims_str(1), "0.000001");
+        assert_eq!(usd_str(2_400_000), "$2.40");
+        assert_eq!(usd_str(5_605_000), "$5.60");
     }
 
     #[test]

@@ -205,3 +205,41 @@ A fourth observation was skipped: the keeper's RPC read failed once ("fetch fail
 
 ### Acceptance
 - Testnet hashes for 3 observations, the settlement and a redemption in PROGRESS.md and CLAIMS.md: PASS
+
+## Phase 4: Cover Note NFT (2026-11-12)
+
+Contract: NEP-171 core (`nft_transfer`, `nft_transfer_call`, `nft_token`, `nft_resolve_transfer`), NEP-177 `nft_metadata` ("Flatrate Cover Note", `FLATNOTE`, `nft-1.0.0`) and NEP-181 enumeration, all delegated to `near-contract-standards` 5.30.1 `NonFungibleToken`. New: `wrap_note`, `unwrap_note`, `redeem_note`, view `note_info`. Token metadata title `Cover Note #<id>: <amount> <Side>, H100, period ending <YYYY-MM-DD>`; `extra` JSON holds market, side, amount, index, floor, cap, period end. The owner check runs first in `unwrap_note`/`redeem_note`, so a non-owner always gets `ERR_NOT_OWNER`. The contract pays mint storage (no attached deposit), like claims and bids.
+
+Upgrade: `migrate` (`#[private]`, `#[init(ignore_state)]`) reads the Phase 2 state layout and adds the empty NFT collections. Tested in the sandbox against the exact wasm that was live on testnet (`contracts/flatrate/tests/res/flatrate_phase2_deployed.wasm`, sha256 `a7fbb3c7...`).
+
+```
+$ CARGO_BUILD_JOBS=2 make test      (VPS)
+shared 18 passed; fusd 3 passed; flatrate unit 3 passed (incl. note_title_helpers); oracle 5 passed
+sandbox: test note_unwrap_before_settle ... ok
+         test note_wrap_transfer_new_owner_redeems_old_owner_cannot ... ok
+         (+ 19 earlier tests ok)
+         test result: ok. 21 passed; 0 failed; finished in 462.46s
+exit=0
+$ cargo test -p flatrate --test sandbox migrate
+test migrate_from_phase2_state_keeps_markets_and_claims ... ok
+```
+
+Testnet redeploy: 1 NEAR top-up for the larger code ([E8PWJJmR](https://testnet.nearblocks.io/txns/E8PWJJmRFqSvv6f1mLy6wYWkhgicQzAKqJUfcdoiGPHc)); deploy `flatrate.wasm` sha256 `c8fd8da60950337088a89a04fd161bc9bfb5292b528b26bfce487f2fe9f74ab5` (408438 bytes) with init call `migrate` ([4znywm1S](https://testnet.nearblocks.io/txns/4znywm1SV5xvos54MJsupmEPY1FP6vT7oxuoxiA9Rkzj)). After: markets 0 (Void), 1 (Auction), 2 (Settled 493750, 3 observations) unchanged; oracle version still `f55f2700...`.
+
+Testnet run, market 3 (19:50 to 20:06 UTC; no auction bids, so it opened with no opening price):
+| Step | Tx | Result |
+|---|---|---|
+| create market 3 | [6sLU23Nd](https://testnet.nearblocks.io/txns/6sLU23NdzVHqfF41Xu4WSAxB9C9izAtkw1rNK4bFecWR) | |
+| holder account + fUSD registration | [HvqGnBoB](https://testnet.nearblocks.io/txns/HvqGnBoBussULppWCEPeAiWwCFhtr48ALhCHvBvKSVFT), [6U1jix1z](https://testnet.nearblocks.io/txns/6U1jix1zhVXgASNGefZZkxKJG3b27344DZTHzxdcTjod) | `holder.flatrate-maris.testnet` |
+| mint 10 pairs | [4WUUUpcu](https://testnet.nearblocks.io/txns/4WUUUpcuPeAhp6NQ4EP5L8g6td3MDQpPgTFYXjLFSJP4) | |
+| **wrap** 10 Long | [3HZS2pZH](https://testnet.nearblocks.io/txns/3HZS2pZHbrUSvvQgzUxS1WrMStxF4RsJmCMgSAnnfGrA) | nft_mint token 0, "Cover Note #0: 10 Long, H100, period ending 2026-11-12" |
+| **transfer** to holder | [3d2a5kcu](https://testnet.nearblocks.io/txns/3d2a5kcu5aPpB74XRKCszLvo2CtgBAVhmutaQbSVNGDJ) | nft_transfer, owner holder |
+| observations | [Hpwa9NAL](https://testnet.nearblocks.io/txns/Hpwa9NALVhbS1ZXpaVsazbuYkWfBCngaiaDvsKKu7pUT), [DgCvofgo](https://testnet.nearblocks.io/txns/DgCvofgonnr9RtosoDej3JoMEozNhQ8rnewXm9ARHEY7), [2CJHtraG](https://testnet.nearblocks.io/txns/2CJHtraGCX1VnnCoqsbX4Ns2p45ZT8xJkZCbWVArbMy1) | 3980000 each, 5 sources, OutLayer requests 33678, 33695, 33710 |
+| settle | [EC77TqDE](https://testnet.nearblocks.io/txns/EC77TqDEr7JXcMWu9zUzh382eqyWBPoqJQYF4Z864SJB) | long 493750 |
+| old owner `redeem_note` | [EykARtbb](https://testnet.nearblocks.io/txns/EykARtbbnerbUyAwwTnDgzQNeqHCDHKzXiG1CaH3jg86) | fails `ERR_NOT_OWNER` |
+| **redeem** by holder | [AV9VT9an](https://testnet.nearblocks.io/txns/AV9VT9anMcr4Kem2zQmCFfuoGPN6D4skptqgjfKZHduT) | 4937500 fUSD to holder (1000000 -> 5937500), nft_burn |
+| root redeems its 10 Short | [4dHfzB4B](https://testnet.nearblocks.io/txns/4dHfzB4BY1oaVPTZvMgrzs8XhL3b4dZzjMSqWs8PVHwg) | 5062500; market collateral 0 |
+
+### Acceptance
+- Tests pass: PASS (sandbox 21/21 plus the migration test)
+- Three testnet transaction hashes (wrap, transfer, redeem): PASS

@@ -932,10 +932,13 @@ name = "flatrate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "borsh",
  "flatrate-shared",
+ "near-contract-standards",
  "near-sdk",
  "near-workspaces",
  "serde_json",
+ "sha2 0.11.1",
  "tokio",
 ]
 

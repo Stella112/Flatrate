@@ -1,4 +1,4 @@
-//! near-workspaces sandbox tests for Flatrate (Phases 1-2).
+//! near-workspaces sandbox tests for Flatrate (Phases 1, 2 and 4).
 //! Needs `make build` first (reads target/wasm/*.wasm). Uses `mock-outlayer` in place of
 //! outlayer.testnet; the mock is never deployed to testnet.
 
@@ -918,5 +918,214 @@ async fn auction_200_bids_clear_within_gas() -> anyhow::Result<()> {
         "CLEAR_200_RESULT price_cents={} pairs={} refunds alice={} bob={}",
         m["opening_price_cents"], pairs, ra, rb
     );
+    Ok(())
+}
+
+// ---------------- Cover Note NFT ----------------
+
+async fn wrap(e: &Env, who: &Account, market: u64, side: &str, amount: u128) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(who
+        .call(e.flat.id(), "wrap_note")
+        .args_json(json!({"market_id": market.to_string(), "side": side, "amount": amount.to_string()}))
+        .gas(Gas::from_tgas(50))
+        .transact()
+        .await?)
+}
+
+async fn note_call(e: &Env, who: &Account, method: &str, token: &str) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(who
+        .call(e.flat.id(), method)
+        .args_json(json!({"token_id": token}))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?)
+}
+
+async fn nft_token(e: &Env, token: &str) -> anyhow::Result<Value> {
+    Ok(e.flat.view("nft_token").args_json(json!({"token_id": token})).await?.json()?)
+}
+
+#[tokio::test]
+async fn note_wrap_transfer_new_owner_redeems_old_owner_cannot() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = open_market(&e, 3).await?;
+    mint(&e, &e.alice, id, 100 * ONE).await?.into_result()?;
+
+    let r = wrap(&e, &e.alice, id, "Long", 40 * ONE).await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    assert!(has_log(&r, "nft_mint"), "{:?}", r.logs());
+    let tok = nft_token(&e, "0").await?;
+    assert_eq!(tok["owner_id"], e.alice.id().to_string());
+    let title = tok["metadata"]["title"].as_str().unwrap().to_string();
+    assert!(title.starts_with("Cover Note #0: 40 Long, H100, period ending "), "{title}");
+    let extra: Value = serde_json::from_str(tok["metadata"]["extra"].as_str().unwrap())?;
+    assert_eq!(extra["amount"], (40 * ONE).to_string());
+    assert_eq!(extra["floor_micros"], FLOOR.to_string());
+    assert_eq!(claims(&e, &e.alice, id, "Long").await?, 60 * ONE, "claims moved into the note");
+    let meta: Value = e.flat.view("nft_metadata").await?.json()?;
+    assert_eq!(meta["spec"], "nft-1.0.0");
+
+    // Transfer the note like any NFT.
+    e.alice
+        .call(e.flat.id(), "nft_transfer")
+        .args_json(json!({"receiver_id": e.bob.id(), "token_id": "0"}))
+        .deposit(NearToken::from_yoctonear(1))
+        .transact()
+        .await?
+        .into_result()?;
+    assert_eq!(nft_token(&e, "0").await?["owner_id"], e.bob.id().to_string());
+    let bob_notes: Value = e.flat.view("nft_tokens_for_owner").args_json(json!({"account_id": e.bob.id()})).await?.json()?;
+    assert_eq!(bob_notes.as_array().unwrap().len(), 1);
+
+    // Before settlement the note cannot be redeemed.
+    let r = note_call(&e, &e.bob, "redeem_note", "0").await?;
+    assert!(fails_with(&r, "ERR_NOT_SETTLED"), "{:?}", r.failures());
+
+    for p in [3_980_000u64, 3_990_000, 4_000_000] {
+        observe(&e, id, "Respond", Some(oracle_output(&around(p), None))).await?.into_result()?;
+    }
+    advance_to(&e.worker, t.period_end).await?;
+    settle(&e, &e.alice, id).await?.into_result()?;
+
+    // The old owner cannot redeem it.
+    let r = note_call(&e, &e.alice, "redeem_note", "0").await?;
+    assert!(fails_with(&r, "ERR_NOT_OWNER"), "{:?}", r.failures());
+
+    // The new owner can: 40 Long x 0.496875 = 19.875 fUSD.
+    let b0 = fusd_balance(&e, &e.bob).await?;
+    let r = note_call(&e, &e.bob, "redeem_note", "0").await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    assert!(has_log(&r, "nft_burn"), "{:?}", r.logs());
+    assert_eq!(fusd_balance(&e, &e.bob).await? - b0, 19_875_000);
+    assert!(nft_token(&e, "0").await?.is_null(), "burned");
+    let supply: String = e.flat.view("nft_total_supply").await?.json()?;
+    assert_eq!(supply, "0");
+    let r = note_call(&e, &e.bob, "redeem_note", "0").await?;
+    assert!(fails_with(&r, "ERR_NO_NOTE"), "paid once: {:?}", r.failures());
+
+    // Alice redeems the rest: 60 Long + 100 Short; the market ends with no collateral left over
+    // beyond rounding.
+    let a0 = fusd_balance(&e, &e.alice).await?;
+    redeem(&e, &e.alice, id).await?.into_result()?;
+    assert_eq!(fusd_balance(&e, &e.alice).await? - a0, 60 * 496_875 + 100 * 503_125);
+    assert_eq!(market(&e, id).await?["collateral"], "0");
+    Ok(())
+}
+
+#[tokio::test]
+async fn note_unwrap_before_settle() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = open_market(&e, 1).await?;
+    mint(&e, &e.alice, id, 10 * ONE).await?.into_result()?;
+    wrap(&e, &e.alice, id, "Short", 4 * ONE).await?.into_result()?;
+    wrap(&e, &e.alice, id, "Short", 3_500_000).await?.into_result()?;
+    assert_eq!(claims(&e, &e.alice, id, "Short").await?, 2_500_000);
+    let title = nft_token(&e, "1").await?["metadata"]["title"].as_str().unwrap().to_string();
+    assert!(title.starts_with("Cover Note #1: 3.5 Short"), "{title}");
+
+    // Someone else cannot unwrap it; wrapping more than you hold fails.
+    let r = note_call(&e, &e.bob, "unwrap_note", "0").await?;
+    assert!(fails_with(&r, "ERR_NOT_OWNER"), "{:?}", r.failures());
+    let r = wrap(&e, &e.alice, id, "Short", 3 * ONE).await?;
+    assert!(fails_with(&r, "ERR_INSUFFICIENT_CLAIMS"), "{:?}", r.failures());
+
+    let r = note_call(&e, &e.alice, "unwrap_note", "0").await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    assert_eq!(claims(&e, &e.alice, id, "Short").await?, 6_500_000);
+    assert!(nft_token(&e, "0").await?.is_null());
+    let r = note_call(&e, &e.alice, "unwrap_note", "0").await?;
+    assert!(fails_with(&r, "ERR_NO_NOTE"), "{:?}", r.failures());
+
+    // After settlement a note can only be redeemed, not unwrapped.
+    observe(&e, id, "Respond", Some(oracle_output(&around(4_000_000), None))).await?.into_result()?;
+    advance_to(&e.worker, t.period_end).await?;
+    settle(&e, &e.alice, id).await?.into_result()?;
+    let r = note_call(&e, &e.alice, "unwrap_note", "1").await?;
+    assert!(fails_with(&r, "ERR_ALREADY_SETTLED"), "{:?}", r.failures());
+    // 3.5 Short x 0.5 (avg 4.00 is the midpoint) = 1.75 fUSD.
+    let a0 = fusd_balance(&e, &e.alice).await?;
+    note_call(&e, &e.alice, "redeem_note", "1").await?.into_result()?;
+    assert_eq!(fusd_balance(&e, &e.alice).await? - a0, 1_750_000);
+    Ok(())
+}
+
+// ---------------- Upgrade from the deployed Phase 2 contract ----------------
+
+#[tokio::test]
+async fn migrate_from_phase2_state_keeps_markets_and_claims() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let root = worker.root_account()?;
+    let owner = root.create_subaccount("owner").initial_balance(NearToken::from_near(50)).transact().await?.into_result()?;
+    let alice = root.create_subaccount("alice").initial_balance(NearToken::from_near(20)).transact().await?.into_result()?;
+    let fusd = root.create_subaccount("fusd").initial_balance(NearToken::from_near(20)).transact().await?.into_result()?
+        .deploy(&wasm("fusd")).await?.into_result()?;
+    let old = std::fs::read(format!("{}/tests/res/flatrate_phase2_deployed.wasm", env!("CARGO_MANIFEST_DIR")))?;
+    let flat_acc = root.create_subaccount("flatrate").initial_balance(NearToken::from_near(30)).transact().await?.into_result()?;
+    let flat = flat_acc.deploy(&old).await?.into_result()?;
+    fusd.call("new").transact().await?.into_result()?;
+    flat.call("new")
+        .args_json(json!({
+            "owner_id": owner.id(), "fusd_id": fusd.id(), "outlayer_id": "outlayer.test.near",
+            "oracle_project_id": "x/flatrate-oracle", "oracle_version_key": "v1", "oracle_sources": SOURCES,
+            "resource_limits": {"max_instructions": "1000000000", "max_memory_mb": 128, "max_execution_seconds": "30"},
+        }))
+        .transact().await?.into_result()?;
+    owner.call(fusd.id(), "storage_deposit").args_json(json!({"account_id": flat.id()}))
+        .deposit(NearToken::from_millinear(10)).transact().await?.into_result()?;
+    alice.call(fusd.id(), "faucet").args_json(json!({})).transact().await?.into_result()?;
+
+    // Old state: one open market with claims, one market still in auction with a sealed bid.
+    let t0 = worker.view_block().await?.timestamp();
+    for (commit, reveal) in [(10u64, 20u64), (600, 1200)] {
+        owner.call(flat.id(), "create_market")
+            .args_json(json!({"index": "H100_HOURLY", "floor_micros": FLOOR.to_string(), "cap_micros": CAP.to_string(),
+                "auction_commit_end": (t0 + commit * SEC).to_string(), "auction_reveal_end": (t0 + reveal * SEC).to_string(),
+                "period_start": (t0 + reveal * SEC).to_string(), "period_end": (t0 + (reveal + 600) * SEC).to_string(),
+                "min_observations": 3, "void_after": (t0 + (reveal + 1200) * SEC).to_string()}))
+            .transact().await?.into_result()?;
+    }
+    let msg = json!({"action": "commit_bid", "market_id": "1", "hash": "ab".repeat(32)}).to_string();
+    alice.call(fusd.id(), "ft_transfer_call")
+        .args_json(json!({"receiver_id": flat.id(), "amount": "2000000", "msg": msg}))
+        .deposit(NearToken::from_yoctonear(1)).gas(Gas::from_tgas(100)).transact().await?.into_result()?;
+    advance_to(&worker, t0 + 20 * SEC).await?;
+    alice.call(flat.id(), "clear_auction").args_json(json!({"market_id": "0"})).transact().await?.into_result()?;
+    let mint_msg = json!({"action": "mint_pair", "market_id": "0"}).to_string();
+    alice.call(fusd.id(), "ft_transfer_call")
+        .args_json(json!({"receiver_id": flat.id(), "amount": (7 * ONE).to_string(), "msg": mint_msg}))
+        .deposit(NearToken::from_yoctonear(1)).gas(Gas::from_tgas(100)).transact().await?.into_result()?;
+    let before0: Value = flat.view("get_market").args_json(json!({"market_id": "0"})).await?.json()?;
+    let before1: Value = flat.view("get_market").args_json(json!({"market_id": "1"})).await?.json()?;
+    let cfg_before: Value = flat.view("get_config").await?.json()?;
+
+    // Upgrade: deploy the current build and call migrate in one transaction.
+    let r = flat_acc
+        .batch(flat.id())
+        .deploy(&wasm("flatrate"))
+        .call(near_workspaces::operations::Function::new("migrate").args_json(json!({})).gas(Gas::from_tgas(100)))
+        .transact()
+        .await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    // migrate is private: a second call from someone else fails.
+    let r = alice.call(flat.id(), "migrate").args_json(json!({})).transact().await?;
+    assert!(!r.is_success());
+
+    let after0: Value = flat.view("get_market").args_json(json!({"market_id": "0"})).await?.json()?;
+    let after1: Value = flat.view("get_market").args_json(json!({"market_id": "1"})).await?.json()?;
+    assert_eq!(before0, after0);
+    assert_eq!(before1, after1);
+    assert_eq!(cfg_before, flat.view("get_config").await?.json::<Value>()?);
+    let bids: Vec<Value> = flat.view("get_bids").args_json(json!({"market_id": "1"})).await?.json()?;
+    assert_eq!(bids[0]["escrow"], "2000000");
+    let long: String = flat.view("claim_balance_of")
+        .args_json(json!({"account_id": alice.id(), "market_id": "0", "side": "Long"})).await?.json()?;
+    assert_eq!(long, (7 * ONE).to_string());
+
+    // New features work on migrated state.
+    alice.call(flat.id(), "wrap_note")
+        .args_json(json!({"market_id": "0", "side": "Long", "amount": (2 * ONE).to_string()}))
+        .gas(Gas::from_tgas(50)).transact().await?.into_result()?;
+    let tok: Value = flat.view("nft_token").args_json(json!({"token_id": "0"})).await?.json()?;
+    assert_eq!(tok["owner_id"], alice.id().to_string());
     Ok(())
 }
