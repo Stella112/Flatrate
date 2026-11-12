@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { href, useApp } from "../App";
 import { PriceChart } from "../Chart";
 import { ONE, OUTLAYER_ID } from "../config";
@@ -44,6 +44,9 @@ export function MarketPage({ id }: { id: string }) {
     [demo, id, guest.accountId],
     demo ? undefined : 10000,
   );
+  // Keep the auction panel (and the clear_auction result) on screen after the market opens.
+  const sawAuction = useRef(false);
+  if (m.data?.status === "Auction") sawAuction.current = true;
   const reloadAll = () => {
     m.reload();
     bids.reload();
@@ -83,7 +86,7 @@ export function MarketPage({ id }: { id: string }) {
           </p>
         )}
         <p className="muted small">
-          Oracle version (wasm sha256) pinned for this market: <span className="mono">{mk.oracle_version_key}</span>
+          Oracle version (wasm sha256) pinned for this market: <span className="mono break">{mk.oracle_version_key}</span>
         </p>
       </Card>
 
@@ -94,7 +97,7 @@ export function MarketPage({ id }: { id: string }) {
         </p>
       </Card>
 
-      {mk.status === "Auction" && <AuctionCard mk={mk} ph={ph} onDone={reloadAll} />}
+      {(mk.status === "Auction" || sawAuction.current) && <AuctionCard mk={mk} ph={ph} onDone={reloadAll} />}
 
       <Card title="Sealed bids">
         {!bids.data?.length ? (
@@ -187,6 +190,7 @@ function AuctionCard({ mk, ph, onDone }: { mk: Market; ph: string; onDone: () =>
           {ph === "commit" && `commits close in ${timeLeft(mk.auction_commit_end)}`}
           {ph === "reveal" && `reveals close in ${timeLeft(mk.auction_reveal_end)}`}
           {ph === "clear" && "ready to clear"}
+          {mk.status !== "Auction" && (mk.opening_price_cents !== null ? `cleared at ${mk.opening_price_cents}¢` : "cleared, nothing matched")}
         </small>
       }
     >
@@ -234,7 +238,7 @@ function AuctionCard({ mk, ph, onDone }: { mk: Market; ph: string; onDone: () =>
                 <span>
                   {b.side} {b.qty} @ {b.limit}¢, escrow {units(b.escrow)} fUSD
                 </span>
-                <span className="mono small">salt {b.salt}</span>
+                <span className="mono small break">salt {b.salt}</span>
                 {b.revealed ? (
                   <span className="pill">revealed</span>
                 ) : (

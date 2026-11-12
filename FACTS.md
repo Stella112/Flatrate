@@ -183,3 +183,16 @@ Deployed wasm sha256: `flatrate.wasm` `a7fbb3c7bd0d098d894f3575b875894ede32732b8
 | 0 | demo | commit until +10 min, reveal +10 min, period 30 min, void 60 min after | 3 | `9FE5ZNdoNLe6kshLiSyrK8wVjNfnJKEFY9mzrCG9mdEk` |
 | 1 | weekly | commit until 2026-11-14 12:00, reveal until 2026-11-15 12:00, period 2026-11-16 00:00 to 2026-11-23 00:00, void 2026-11-25 00:00 | 7 | `6bUXwvzCCJCLKWfTMKq3BWnHmp24DF2EuDDjFmPzgKvK` |
 Both: floor `2_400_000`, cap `5_600_000` (section 5).
+
+## 10. Frontend and hosting (Phase 5, 2026-11-12)
+
+| Fact | Value | Source |
+|---|---|---|
+| npm versions (at least 2 weeks old) | near-api-js 7.4.0 (2026-10-23), vite 8.3.5 (2026-10-21), @vitejs/plugin-react 6.1.2, react and react-dom 19.1.10, typescript 7.0.2 | `npm view <pkg> time --json` |
+| near-api-js 7.4.0 API used | `new JsonRpcProvider({url})`, `provider.callFunction({contractId, method, args})`, `provider.viewAccount({accountId})`, `new Account(id, provider, keyPairString)`, `account.signAndSendTransaction({receiverId, actions, throwOnFailure, waitUntil})`, `actions.functionCall(method, args, gas, deposit)`, `actions.transfer(amount)`, `KeyPair.fromRandom("ed25519")`, `KeyPair.fromString` | `web/node_modules/near-api-js/lib/index.d.ts`, `account-BfsHguAv.d.ts` |
+| NearBlocks API | v1 and v2 retired on testnet; v3 `GET /v3/accounts/{account}/txns?limit=&next=` works without a key, results in `data`, cursor in `meta.next_page`, `actions[{action, method}]`; CORS `*` | `https://api-testnet.nearblocks.io/api-docs/migration`; curl |
+| Archival RPC | `EXPERIMENTAL_tx_status` on `https://archival-rpc.testnet.fastnear.com` returns the full receipt tree, including OutLayer's result (`SuccessValue` = oracle JSON) and `[[yNEAR charged: "..."]]` logs; CORS `*` | curl |
+| OutLayer charge per observation | 0.0012891, 0.0014748, 0.0012725 NEAR (market 2) | `fixtures/demo/market-2.json` |
+| fUSD registration cost | `storage_balance_bounds` min = max = 1250000000000000000000 (0.00125 NEAR) | view call |
+| 1Click auth | OpenAPI `securitySchemes`: bearer JWT | `https://1click.chaindefuser.com/docs/v0/openapi.yaml` |
+| Hosted URL | https://flatrate-gpu.vercel.app/ (Vercel, Root Directory `web`) | Maris; curl HTTP 200 |

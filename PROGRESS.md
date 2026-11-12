@@ -243,3 +243,44 @@ Testnet run, market 3 (19:50 to 20:06 UTC; no auction bids, so it opened with no
 ### Acceptance
 - Tests pass: PASS (sandbox 21/21 plus the migration test)
 - Three testnet transaction hashes (wrap, transfer, redeem): PASS
+
+## Phase 5: frontend, sponsor and hosting (2026-11-12)
+
+- `web/`: Vite 8.3.5 + React 19.1.10 + TypeScript 7.0.2 + near-api-js 7.4.0 (versions pinned to releases at least two weeks old; `npm view <pkg> time`). Pages: Markets, Market (chart, sealed auction with local salt backup, mint/redeem/transfer, wrap, request observation, settle, redeem), My notes, Proof, Pay from any chain. Hash routing; no router or chart library.
+- Guest accounts: the browser makes an ed25519 key (`localStorage`); the account id is its implicit id. `web/api/sponsor.js` sends 0.5 NEAR and, in one batch to fUSD, `faucet` + `storage_deposit` + `ft_transfer` of 100 fUSD. Rate limit 3 per IP per hour, in function memory only (best effort).
+- The commitment hash is computed in the browser; checked equal to the contract's `bid_hash` view for 3 cases including a Unicode and an empty salt.
+- Proof page: lists observation transactions from NearBlocks API v3 (no key, CORS `*`) and reads each receipt tree from `archival-rpc.testnet.fastnear.com`, matching by pending id; shows the OutLayer request id, per-source prices, OutLayer's charge, and a check that the stored price equals OutLayer's output.
+- `web/api/quote.js`: 1Click `/v0/quote` with `dry: true`, USDC on EVM chains (asset ids from live `/v0/tokens`) to USDC on NEAR. 1Click was timing out during this phase (BLOCKERS B8); the page shows the error and offers the recorded quote, labelled "recorded".
+- Scripted demo mode (`/?demo=scripted`): replays market 2 from `fixtures/demo/market-2.json` (recorded from public RPC by `scripts/record-demo-fixture.mjs`); badge on every screen; actions disabled.
+- Hosting: Vercel project with Root Directory `web`, config `web/vercel.json`, env `SPONSOR_ACCOUNT_ID=flatrate-sponsor.testnet` and `SPONSOR_PRIVATE_KEY` set by Maris in Vercel. Two failed builds while fixing the layout (`npm ci --prefix`, then the Root Directory); functions moved to `web/api/`.
+- **Public URL: https://flatrate-gpu.vercel.app/**
+
+### Acceptance run on the hosted URL (2026-11-12, 20:46 to 21:14 UTC)
+
+Fresh profile for that origin: the first visit created a new key, guest `25569026bb835b6129bbaa0d0962b12371a8d5bc06baa4eb5f718c3893f7eede` (not on chain before). Market 4 was created for the run ([Bp7jHQ7z](https://testnet.nearblocks.io/txns/Bp7jHQ7zAdXLm7QL1K2CNTikNGsFbC4x51ugyHBiPxwD)): commits 8 min, reveals 6 min, period 12 min, min 2 observations. Every step below was a button on the hosted site, signed by the guest key in the browser (hashes from NearBlocks for the guest account):
+
+| Step | Tx | Result |
+|---|---|---|
+| guest account (sponsor) | [4JkHyZav](https://testnet.nearblocks.io/txns/4JkHyZavRtEkC9bm3aNFC8HevxUyRSr4Sv9yWgB4zvLi) | 0.5 NEAR, then 100 fUSD |
+| faucet | [FtdQBw76](https://testnet.nearblocks.io/txns/FtdQBw765PiWg89dV3LtVqTAXkQmdmhjYWteLss1chUg) | +100 fUSD |
+| commit Long 10 @ 55c (escrow 6) | [ETvoieX6](https://testnet.nearblocks.io/txns/ETvoieX6unbFhu4gWZDY5qBRcUH7vBhH2LFZq9UH4Swu) | sealed |
+| commit Short 10 @ 50c (escrow 5) | [EuxgYc2H](https://testnet.nearblocks.io/txns/EuxgYc2H4rDx8vWemD3V5681BZwrSn2HcUDH1KW4veof) | sealed |
+| reveal Long | [A8HdXSP3](https://testnet.nearblocks.io/txns/A8HdXSP3veJPQW6WdodqSrHo3rbPWKZbwBqNY5xXBsnS) | revealed |
+| reveal Short | [95QnftYx](https://testnet.nearblocks.io/txns/95QnftYx173msSPkgnYrfHJLU1aXQPhR4aW4odafnc3x) | revealed |
+| clear | [EV33D1WX](https://testnet.nearblocks.io/txns/EV33D1WXYGfp63JQuFv9fGqpEEFPY8fdUskwVjAbhTMG) | 50c, 10 pairs, 1 fUSD refund owed |
+| request observation | [4Cqz4igh](https://testnet.nearblocks.io/txns/4Cqz4ighB3DrEEXg6N2hGmHQS9KpD9mNEcp4M8H2Mr72) | 3980000, 5 sources, OutLayer 34027 |
+| mint 5 pairs | [FuEKCcDZ](https://testnet.nearblocks.io/txns/FuEKCcDZC4QmT8j3adj2Qw1LWnJfXaeVjdx3wjfoy9SY) | |
+| wrap 5 Long | [GnxmBM8g](https://testnet.nearblocks.io/txns/GnxmBM8gw7jCqjBX1grDsxtAeB5Encw79oiF3uZ7C2B4) | Cover Note #1 |
+| transfer note to holder.flatrate-maris.testnet | [ARf3TzuY](https://testnet.nearblocks.io/txns/ARf3TzuYyFJ8cPqFcTTGMDJQb932uUhih6xscoH5HHup) | owner holder (checked with `nft_token`) |
+| withdraw refund | [GrZH5oPM](https://testnet.nearblocks.io/txns/GrZH5oPM3y1LSv19TM1wNSTRrHffpNp3QTiLA1JwDiAh) | 1 fUSD |
+| request observation | [APAUp3G9](https://testnet.nearblocks.io/txns/APAUp3G9KmA8HbPyZdZ8bWy77Y3cgVzMDcM6QeCnnXAP) | 3980000, OutLayer 34041 |
+| settle before period end | [2AeCmvMf](https://testnet.nearblocks.io/txns/2AeCmvMfBFUYwcx4a9gkQoSuG1A5Wv1SeQRdTdnehJVU) | fails `ERR_PERIOD_NOT_ENDED` |
+| settle | [4wyFyQ4n](https://testnet.nearblocks.io/txns/4wyFyQ4n74AjKBbypsXyxy5i8GWX8kFwzshpQudi7BPc) | long 493750 |
+| redeem (10 Long + 15 Short) | [8BkqBNEE](https://testnet.nearblocks.io/txns/8BkqBNEEbEA6YYMRYgb8t9PLbzmWKQYgziyhYnRHK6E) | 12.53125 fUSD (185 -> 197.53125) |
+| holder redeems the note (CLI) | [GKH9gkZF](https://testnet.nearblocks.io/txns/GKH9gkZFraVpYDa9JW13dJd7LYtbE8xRtcbBvGQr1QQD) | 2.46875 fUSD; market 4 collateral 0 |
+
+Screenshots: `docs/screens/01..09`. Found and fixed during the run: the auction panel vanished after clearing (it now stays and shows the clearing price); at 375 px the oracle hash overflowed (it now wraps).
+
+### Acceptance
+- Full flow from a clean browser profile on the hosted URL (guest, faucet, commit, reveal, clear, mint, wrap, transfer, settle, redeem): PASS
+- Screenshots in docs/screens/: PASS
