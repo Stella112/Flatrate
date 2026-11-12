@@ -24,7 +24,7 @@ step() { # name, log file, command...
 
 # 1. shared
 if step "shared tests" "$LOG/shared.log" cargo test -p flatrate-shared; then
-  row "shared payoff/median/auction tests" PASS "$(last "$LOG/shared.log" 'test result')"
+  row "shared payoff/median/auction tests" PASS "$(grep -m1 'test result' "$LOG/shared.log")"
 else row "shared payoff/median/auction tests" FAIL "see $LOG/shared.log"; fi
 
 # 2. contracts
