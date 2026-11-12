@@ -2,7 +2,21 @@
 
 Open items, each with evidence. Updated 2026-11-12 (Phase 0).
 
-## B1. Callback check in the spec does not match how OutLayer works (needs Maris's OK)
+## B1. Callback check in the spec does not match how OutLayer works: RESOLVED 2026-11-12
+
+Decision (Maris: "choose the best that doesn't limit it"): option D below. Both gates (caller is the contract itself, id is pending) are required to record a price; the order of checks only decides which error an attacker sees, so all four attack buttons show distinct errors with no live request, no market period and no cost.
+
+```
+on_observation(market_id, pending_id, #[callback_result] result):
+  1. pending_id < next_pending_id && !pending.contains(pending_id) -> panic ERR_UNKNOWN_REQUEST   // consumed id = replay
+  2. predecessor != current_account_id                             -> panic ERR_NOT_OUTLAYER      // anyone but our own .then
+  3. pending.remove(pending_id) is None                            -> panic ERR_UNKNOWN_REQUEST   // never issued (unreachable from self)
+  4. Ok(Some(out)) -> validate (>=3 sources, 0 < price < 10*cap) and record; Ok(None) -> event; Err -> refund deposit to caller
+```
+
+Attack buttons: Fake price = made-up price with a never-issued id -> `ERR_NOT_OUTLAYER`; Replay = an id already used by a real observation -> `ERR_UNKNOWN_REQUEST`; Early settlement and Steal a note unchanged. Pending ids and used ids are public state, so step 1 leaks nothing. Tests: sandbox "non-OutLayer caller rejected" and "unknown request id rejected" (consumed id from an outside caller) both run against the deployed-style contract; no test-only code path.
+
+Original analysis:
 
 CLAUDE.md says `on_observation` "accepts a result only if its predecessor is the OutLayer contract and it matches a pending request id stored by `request_observation`".
 

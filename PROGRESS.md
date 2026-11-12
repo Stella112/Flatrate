@@ -67,3 +67,6 @@ floor 2.40 (`2_400_000`), cap 5.60 (`5_600_000`) from median 3.98.
 - FACTS.md has every item with a source: PASS for steps 1-3, 6, 7, 9; steps 4, 5 FAIL (blocked, B2).
 - fixtures/ has raw responses: PASS.
 - One successful OutLayer testnet tx hash: FAIL (blocked, B2).
+
+### Decisions after the Phase 0 report
+- B1 resolved (2026-11-12): `on_observation` is guarded by "caller is this contract" plus "pending id exists", with the replay check ordered first so attack buttons show distinct errors. The spec's "predecessor is the OutLayer contract" is not possible with OutLayer's promise-return flow (FACTS.md 3.3). Details in BLOCKERS.md B1.
