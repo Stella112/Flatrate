@@ -69,3 +69,7 @@ The sandbox suite took 402 s on the 2-core VPS (the 200-bid test alone ~140 s). 
 ## B7. Reproducible oracle hash for `make verify` (Phase 6, not blocking yet)
 
 `make verify` must check that the pinned version (`f55f2700...`) equals the hash of `oracle/` built from this commit. The current wasm was built with plain `cargo build` on the VPS (rustc 1.98.1). A judge's machine with another rustc may produce different bytes. Options: pin the toolchain with `rust-toolchain.toml` and rebuild/redeploy, or use OutLayer's reproducible Docker build (`scripts/build_github_wasm.sh`, docs/CLI.md) and redeploy that version. To decide in Phase 6; markets keep the version pinned at creation, so a new version needs new markets.
+
+## B8. 1Click quote endpoint timing out (2026-11-12 ~20:20 UTC, not ours)
+
+`POST https://1click.chaindefuser.com/v0/quote` with the exact Phase 0 request (`fixtures/1click-quote-request.json`, fresh deadline) now answers HTTP 500 `Failed to receive response within timeout of 25000ms for exchange "1Click-API:api-exchange" and routing key "quote"` (correlationId `58b40147-160f-4209-8e94-e208b7d80b23`). The same request returned a quote at 00:10 UTC. The Pay page shows 1Click's error and offers the recorded quote, labelled "recorded". Re-check before submission.

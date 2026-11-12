@@ -1,0 +1,10 @@
+{
+  "name": "flatrate",
+  "private": true,
+  "type": "module",
+  "description": "Root package for the Vercel serverless functions in api/ (the frontend is in web/)",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  }
+}

@@ -1,0 +1,485 @@
+{
+  "recorded_at": "2026-11-12T20:13:52.627Z",
+  "source": "testnet flatrate.flatrate-maris.testnet, market 2; recorded from public RPC by scripts/record-demo-fixture.mjs",
+  "config": {
+    "owner_id": "flatrate-maris.testnet",
+    "fusd_id": "fusd.flatrate-maris.testnet",
+    "outlayer_id": "outlayer.testnet",
+    "oracle_project_id": "flatrate-maris.testnet/flatrate-oracle",
+    "oracle_version_key": "f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa",
+    "oracle_sources": [
+      "akash",
+      "vast",
+      "runpod",
+      "shadeform",
+      "verda"
+    ],
+    "resource_limits": {
+      "max_instructions": "1000000000",
+      "max_memory_mb": 128,
+      "max_execution_seconds": "30"
+    },
+    "next_pending_id": "6",
+    "market_count": "4"
+  },
+  "market": {
+    "id": "2",
+    "index": "H100_HOURLY",
+    "floor_micros": "2400000",
+    "cap_micros": "5600000",
+    "auction_commit_end": "1794511638000000000",
+    "auction_reveal_end": "1794511878000000000",
+    "period_start": "1794511878000000000",
+    "period_end": "1794512838000000000",
+    "min_observations": 3,
+    "void_after": "1794514638000000000",
+    "status": {
+      "Settled": {
+        "long_payout_micros": 493750
+      }
+    },
+    "observations": [
+      {
+        "price_micros": "3980000",
+        "sources_ok": 5,
+        "at": "1794511949814797929",
+        "outlayer_request": "33589",
+        "pending_id": "0"
+      },
+      {
+        "price_micros": "3980000",
+        "sources_ok": 5,
+        "at": "1794512142435516749",
+        "outlayer_request": "33605",
+        "pending_id": "1"
+      },
+      {
+        "price_micros": "3980000",
+        "sources_ok": 5,
+        "at": "1794512384615893306",
+        "outlayer_request": "33621",
+        "pending_id": "2"
+      }
+    ],
+    "oracle_version_key": "f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa",
+    "oracle_input": "{\"index\":\"H100_HOURLY\",\"sources\":[\"akash\",\"vast\",\"runpod\",\"shadeform\",\"verda\"]}",
+    "opening_price_cents": 50,
+    "pairs": "10000000",
+    "collateral": "0",
+    "bid_count": 2
+  },
+  "bids": [
+    {
+      "index": 0,
+      "bidder": "flatrate-maris.testnet",
+      "hash": "5ea80dee3417849cb70529c85a298896121dde8d434a5ff8bfda48ab35b2419b",
+      "escrow": "6000000",
+      "committed_at": "1794511409632333157",
+      "revealed": {
+        "side": "Long",
+        "qty": "10",
+        "limit_cents": 55
+      },
+      "filled_qty": "10",
+      "cost": "5000000"
+    },
+    {
+      "index": 1,
+      "bidder": "flatrate-maris.testnet",
+      "hash": "ebaab3e121ad023ec2e38d7609e25c1d6330683dcf743738e4cfd308ff54b8b6",
+      "escrow": "5000000",
+      "committed_at": "1794511416902257089",
+      "revealed": {
+        "side": "Short",
+        "qty": "10",
+        "limit_cents": 50
+      },
+      "filled_qty": "10",
+      "cost": "5000000"
+    }
+  ],
+  "steps": [
+    {
+      "label": "Market created (4 min commits, 4 min reveals, 16 min period)",
+      "hash": "8pWiDZhuzr5YWBDUFCuHhQebVZJywF4aShDzay2pL3S3",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "market_created",
+          "data": {
+            "market_id": "2"
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Sealed bid committed (hash only): Long",
+      "hash": "FtGfietXW3iEQEWd1nqt24YSrL3KcJ3h4unuaBzvaP5c",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "bid_committed",
+          "data": {
+            "market_id": "2",
+            "index": 0,
+            "bidder": "flatrate-maris.testnet",
+            "escrow": "6000000",
+            "hash": "5ea80dee3417849cb70529c85a298896121dde8d434a5ff8bfda48ab35b2419b"
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Sealed bid committed (hash only): Short",
+      "hash": "6EebToNWF8k886Ggd7WnDLcTeKMDYtBirxfqoRyJZwuW",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "bid_committed",
+          "data": {
+            "market_id": "2",
+            "index": 1,
+            "bidder": "flatrate-maris.testnet",
+            "escrow": "5000000",
+            "hash": "ebaab3e121ad023ec2e38d7609e25c1d6330683dcf743738e4cfd308ff54b8b6"
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Bid revealed: Long 10 at 55c",
+      "hash": "CFBVocs334kHjBYt5FCANjttTeYToxa5beZniovAmBUq",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "bid_revealed",
+          "data": {
+            "market_id": "2",
+            "index": 0,
+            "bidder": "flatrate-maris.testnet",
+            "side": "Long",
+            "qty": "10",
+            "limit_cents": 55
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Bid revealed: Short 10 at 50c",
+      "hash": "C5RBz9Brjd1CQriS1WedrgrQW3MaQE4YNN8SiM7RpyUQ",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "bid_revealed",
+          "data": {
+            "market_id": "2",
+            "index": 1,
+            "bidder": "flatrate-maris.testnet",
+            "side": "Short",
+            "qty": "10",
+            "limit_cents": 50
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Auction cleared: opening price 50c, 10 pairs minted",
+      "hash": "36ay9uLTur5W25J1yuDngkVDE73Wf9xQTXKxb1vpJVry",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "auction_cleared",
+          "data": {
+            "market_id": "2",
+            "price_cents": 50,
+            "matched": "10000000",
+            "bids": 2,
+            "revealed": 2
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Observation 1 through OutLayer",
+      "hash": "J5eEofdJEPKpk1BMe5zy8Rj6rbV8mR5PhhoNUrVFAshk",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "observation_requested",
+          "data": {
+            "market_id": "2",
+            "pending_id": "0",
+            "caller": "flatrate-maris.testnet"
+          }
+        },
+        {
+          "standard": "flatrate",
+          "event": "observation_recorded",
+          "data": {
+            "market_id": "2",
+            "pending_id": "0",
+            "price_micros": "3980000",
+            "sources_ok": 5,
+            "outlayer_request": "33589"
+          }
+        }
+      ],
+      "oracle": {
+        "fetched_at": 1794511945,
+        "index": "H100_HOURLY",
+        "price_micros": 3980000,
+        "request_id": "33589",
+        "sources": [
+          {
+            "error": null,
+            "name": "akash",
+            "price_micros": 2560000
+          },
+          {
+            "error": null,
+            "name": "vast",
+            "price_micros": 2200741
+          },
+          {
+            "error": null,
+            "name": "runpod",
+            "price_micros": 4390000
+          },
+          {
+            "error": null,
+            "name": "shadeform",
+            "price_micros": 3980000
+          },
+          {
+            "error": null,
+            "name": "verda",
+            "price_micros": 5138000
+          }
+        ]
+      },
+      "outlayer_charged_yocto": "1289105200000000000000"
+    },
+    {
+      "label": "Observation 2 through OutLayer",
+      "hash": "3Wed41tV6aTaJxWHpHUfjgsWYdTyGikrn6sxfsx7kSZd",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "observation_requested",
+          "data": {
+            "market_id": "2",
+            "pending_id": "1",
+            "caller": "flatrate-maris.testnet"
+          }
+        },
+        {
+          "standard": "flatrate",
+          "event": "observation_recorded",
+          "data": {
+            "market_id": "2",
+            "pending_id": "1",
+            "price_micros": "3980000",
+            "sources_ok": 5,
+            "outlayer_request": "33605"
+          }
+        }
+      ],
+      "oracle": {
+        "fetched_at": 1794512136,
+        "index": "H100_HOURLY",
+        "price_micros": 3980000,
+        "request_id": "33605",
+        "sources": [
+          {
+            "error": null,
+            "name": "akash",
+            "price_micros": 2560000
+          },
+          {
+            "error": null,
+            "name": "vast",
+            "price_micros": 2200741
+          },
+          {
+            "error": null,
+            "name": "runpod",
+            "price_micros": 4390000
+          },
+          {
+            "error": null,
+            "name": "shadeform",
+            "price_micros": 3980000
+          },
+          {
+            "error": null,
+            "name": "verda",
+            "price_micros": 5138000
+          }
+        ]
+      },
+      "outlayer_charged_yocto": "1474805200000000000000"
+    },
+    {
+      "label": "Observation 3 through OutLayer",
+      "hash": "4zsSXYWoaxW37xZoiTj2QUv5kZV1khHt9s4AEr7494wb",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "observation_requested",
+          "data": {
+            "market_id": "2",
+            "pending_id": "2",
+            "caller": "flatrate-maris.testnet"
+          }
+        },
+        {
+          "standard": "flatrate",
+          "event": "observation_recorded",
+          "data": {
+            "market_id": "2",
+            "pending_id": "2",
+            "price_micros": "3980000",
+            "sources_ok": 5,
+            "outlayer_request": "33621"
+          }
+        }
+      ],
+      "oracle": {
+        "fetched_at": 1794512380,
+        "index": "H100_HOURLY",
+        "price_micros": 3980000,
+        "request_id": "33621",
+        "sources": [
+          {
+            "error": null,
+            "name": "akash",
+            "price_micros": 2560000
+          },
+          {
+            "error": null,
+            "name": "vast",
+            "price_micros": 2200741
+          },
+          {
+            "error": null,
+            "name": "runpod",
+            "price_micros": 4390000
+          },
+          {
+            "error": null,
+            "name": "shadeform",
+            "price_micros": 3980000
+          },
+          {
+            "error": null,
+            "name": "verda",
+            "price_micros": 5138000
+          }
+        ]
+      },
+      "outlayer_charged_yocto": "1272505200000000000000"
+    },
+    {
+      "label": "Settled on the average of the observations",
+      "hash": "DrfwCuCv7UV3mmkokj1pn8NHf7hHjYnj2UtJA878iZjF",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "market_settled",
+          "data": {
+            "market_id": "2",
+            "avg_micros": "3980000",
+            "long_payout_micros": "493750",
+            "short_payout_micros": "506250",
+            "observations": 3
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Redeemed 10 Long + 10 Short for fUSD",
+      "hash": "457EHofVsV1WBohX2a4GZnd9zN8VcYey3KbKX8wxTF4P",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "redeem",
+          "data": {
+            "market_id": "2",
+            "account_id": "flatrate-maris.testnet",
+            "long": "10000000",
+            "short": "10000000",
+            "amount": "10000000"
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    },
+    {
+      "label": "Unused auction escrow withdrawn",
+      "hash": "fhB4bGVEKgrq29YyvQ171oXErb7hV2ofzfF7kftehVg",
+      "signer": "flatrate-maris.testnet",
+      "block_timestamp": null,
+      "ok": true,
+      "events": [
+        {
+          "standard": "flatrate",
+          "event": "refund_withdrawn",
+          "data": {
+            "account_id": "flatrate-maris.testnet",
+            "amount": "1000000"
+          }
+        }
+      ],
+      "oracle": null,
+      "outlayer_charged_yocto": null
+    }
+  ]
+}
