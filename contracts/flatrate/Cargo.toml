@@ -17,3 +17,5 @@ near-workspaces = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+borsh = { workspace = true }
+sha2 = { workspace = true }

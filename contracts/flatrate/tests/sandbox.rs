@@ -1,4 +1,4 @@
-//! near-workspaces sandbox tests for Flatrate Phase 1.
+//! near-workspaces sandbox tests for Flatrate (Phases 1-2).
 //! Needs `make build` first (reads target/wasm/*.wasm). Uses `mock-outlayer` in place of
 //! outlayer.testnet; the mock is never deployed to testnet.
 
@@ -512,5 +512,411 @@ async fn create_market_is_owner_only() -> anyhow::Result<()> {
         .transact()
         .await?;
     assert!(fails_with(&r, "ERR_NOT_OWNER"), "{:?}", r.failures());
+    Ok(())
+}
+
+// ---------------- Sealed opening auction ----------------
+
+struct AuctionTimes {
+    commit_end: u64,
+    reveal_end: u64,
+}
+
+/// Creates a market with the given commit and reveal windows (seconds from now).
+async fn create_auction_market(e: &Env, commit_s: u64, reveal_s: u64) -> anyhow::Result<(u64, AuctionTimes)> {
+    let t0 = now(&e.worker).await?;
+    let t = AuctionTimes { commit_end: t0 + commit_s * SEC, reveal_end: t0 + (commit_s + reveal_s) * SEC };
+    let id: String = e
+        .owner
+        .call(e.flat.id(), "create_market")
+        .args_json(json!({
+            "index": "H100_HOURLY",
+            "floor_micros": FLOOR.to_string(), "cap_micros": CAP.to_string(),
+            "auction_commit_end": t.commit_end.to_string(),
+            "auction_reveal_end": t.reveal_end.to_string(),
+            "period_start": t.reveal_end.to_string(),
+            "period_end": (t.reveal_end + 120 * SEC).to_string(),
+            "min_observations": 3,
+            "void_after": (t.reveal_end + 240 * SEC).to_string(),
+        }))
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    Ok((id.parse()?, t))
+}
+
+#[derive(Clone)]
+struct TestBid {
+    side: &'static str,
+    qty: u64,
+    limit: u8,
+    salt: String,
+    escrow: u128,
+}
+
+impl TestBid {
+    fn new(side: &'static str, qty: u64, limit: u8, salt: &str, extra: u128) -> Self {
+        Self { side, qty, limit, salt: salt.to_string(), escrow: qty as u128 * limit as u128 * 10_000 + extra }
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// sha256(borsh(market_id: u64, side: u8 enum index, qty: u64, limit_cents: u8, salt: String)).
+fn bid_hash(market: u64, b: &TestBid) -> String {
+    use sha2::{Digest, Sha256};
+    let side: u8 = if b.side == "Long" { 0 } else { 1 };
+    let bytes = borsh::to_vec(&(market, side, b.qty, b.limit, b.salt.clone())).unwrap();
+    hex(Sha256::digest(&bytes).as_slice())
+}
+
+fn commit_msg(market: u64, b: &TestBid) -> String {
+    json!({"action": "commit_bid", "market_id": market.to_string(), "hash": bid_hash(market, b)}).to_string()
+}
+
+async fn commit(e: &Env, who: &Account, market: u64, b: &TestBid) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(who
+        .call(e.fusd.id(), "ft_transfer_call")
+        .args_json(json!({"receiver_id": e.flat.id(), "amount": b.escrow.to_string(), "msg": commit_msg(market, b)}))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?)
+}
+
+fn reveal_args(market: u64, b: &TestBid) -> Value {
+    json!({"market_id": market.to_string(), "side": b.side, "qty": b.qty.to_string(), "limit_cents": b.limit, "salt": b.salt})
+}
+
+async fn reveal(e: &Env, who: &Account, market: u64, b: &TestBid) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(who.call(e.flat.id(), "reveal_bid").args_json(reveal_args(market, b)).gas(Gas::from_tgas(30)).transact().await?)
+}
+
+async fn clear(e: &Env, market: u64) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(e.alice
+        .call(e.flat.id(), "clear_auction")
+        .args_json(json!({"market_id": market.to_string()}))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?)
+}
+
+async fn refund_balance(e: &Env, who: &Account) -> anyhow::Result<u128> {
+    let v: String = e.flat.view("refund_balance_of").args_json(json!({"account_id": who.id()})).await?.json()?;
+    Ok(v.parse()?)
+}
+
+async fn withdraw(e: &Env, who: &Account) -> anyhow::Result<ExecutionFinalResult> {
+    Ok(who.call(e.flat.id(), "withdraw_refund").gas(Gas::from_tgas(50)).transact().await?)
+}
+
+async fn bids(e: &Env, market: u64) -> anyhow::Result<Vec<Value>> {
+    Ok(e.flat
+        .view("get_bids")
+        .args_json(json!({"market_id": market.to_string(), "limit": 200}))
+        .await?
+        .json()?)
+}
+
+/// A receipt in the transaction failed with `err` (the outer ft_transfer_call may still succeed
+/// because NEP-141 `ft_resolve_transfer` refunds the sender).
+fn receipt_failed_with(res: &ExecutionFinalResult, err: &str) -> bool {
+    format!("{:?}", res.failures()).contains(err)
+}
+
+#[tokio::test]
+async fn auction_two_bid_match() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    let a0 = fusd_balance(&e, &e.alice).await?;
+    let b0 = fusd_balance(&e, &e.bob).await?;
+    // Alice deposits 1 fUSD more than she needs, so the deposit does not reveal the bid.
+    let long = TestBid::new("Long", 10, 60, "alice-salt-1", ONE);
+    let short = TestBid::new("Short", 10, 45, "bob-salt-1", 0);
+
+    // The contract's view computes the same commitment as the client.
+    let view_hash: String = e.flat.view("bid_hash").args_json(reveal_args(id, &long)).await?.json()?;
+    assert_eq!(view_hash, bid_hash(id, &long));
+
+    commit(&e, &e.alice, id, &long).await?.into_result()?;
+    commit(&e, &e.bob, id, &short).await?.into_result()?;
+    assert_eq!(market(&e, id).await?["bid_count"], 2);
+    assert_eq!(fusd_balance(&e, &e.alice).await?, a0 - long.escrow);
+    // Before reveal, the stored bid shows only the hash and escrow.
+    assert!(bids(&e, id).await?[0]["revealed"].is_null());
+
+    advance_to(&e.worker, t.commit_end).await?;
+    reveal(&e, &e.alice, id, &long).await?.into_result()?;
+    reveal(&e, &e.bob, id, &short).await?.into_result()?;
+
+    advance_to(&e.worker, t.reveal_end).await?;
+    let r = clear(&e, id).await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    let m = market(&e, id).await?;
+    assert_eq!(m["status"], "Open");
+    assert_eq!(m["opening_price_cents"], 55);
+    assert_eq!(m["pairs"], (10 * ONE).to_string());
+    assert_eq!(m["collateral"], (10 * ONE).to_string());
+    assert_eq!(claims(&e, &e.alice, id, "Long").await?, 10 * ONE);
+    assert_eq!(claims(&e, &e.bob, id, "Short").await?, 10 * ONE);
+    // Alice paid 10 x 55c = 5.50 of 7.00; Bob paid 10 x 45c = 4.50, all of his escrow.
+    assert_eq!(refund_balance(&e, &e.alice).await?, 1_500_000);
+    assert_eq!(refund_balance(&e, &e.bob).await?, 0);
+
+    withdraw(&e, &e.alice).await?.into_result()?;
+    assert_eq!(fusd_balance(&e, &e.alice).await?, a0 - 5_500_000);
+    assert_eq!(fusd_balance(&e, &e.bob).await?, b0 - 4_500_000);
+    let r = withdraw(&e, &e.bob).await?;
+    assert!(fails_with(&r, "ERR_NOTHING_TO_REFUND"), "{:?}", r.failures());
+    let r = withdraw(&e, &e.alice).await?;
+    assert!(fails_with(&r, "ERR_NOTHING_TO_REFUND"), "a refund is paid once: {:?}", r.failures());
+    assert_eq!(fusd_balance(&e, &e.flat.as_account().clone()).await?, 10 * ONE);
+
+    // Clearing twice is refused; minting works once the market is open.
+    let r = clear(&e, id).await?;
+    assert!(fails_with(&r, "ERR_NOT_IN_AUCTION"), "{:?}", r.failures());
+    mint(&e, &e.alice, id, ONE).await?.into_result()?;
+    assert_eq!(claims(&e, &e.alice, id, "Long").await?, 11 * ONE);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_tie_break() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    // Long up to 70c and Short up to 70c match 5 at every P in 30..=70; the rule picks 50.
+    let long = TestBid::new("Long", 5, 70, "l", 0);
+    let short = TestBid::new("Short", 5, 70, "s", 0);
+    commit(&e, &e.alice, id, &long).await?.into_result()?;
+    commit(&e, &e.bob, id, &short).await?.into_result()?;
+    advance_to(&e.worker, t.commit_end).await?;
+    reveal(&e, &e.alice, id, &long).await?.into_result()?;
+    reveal(&e, &e.bob, id, &short).await?.into_result()?;
+    advance_to(&e.worker, t.reveal_end).await?;
+    clear(&e, id).await?.into_result()?;
+    assert_eq!(market(&e, id).await?["opening_price_cents"], 50);
+    // Each side paid 2.50 of 3.50 and gets 1.00 back.
+    assert_eq!(refund_balance(&e, &e.alice).await?, ONE);
+    assert_eq!(refund_balance(&e, &e.bob).await?, ONE);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_partial_fill() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    // Short 7 at 50c (P >= 50). Longs in commit order: 5@60, 5@55, 5@60.
+    // At P = 50 Long has 15 and Short 7. Fill by limit, then commit order: bid 0 gets 5,
+    // bid 2 gets 2 (the marginal bid, partly filled), bid 1 gets nothing.
+    let l0 = TestBid::new("Long", 5, 60, "l0", 0);
+    let l1 = TestBid::new("Long", 5, 55, "l1", 0);
+    let l2 = TestBid::new("Long", 5, 60, "l2", 0);
+    let s = TestBid::new("Short", 7, 50, "s", 0);
+    commit(&e, &e.alice, id, &l0).await?.into_result()?;
+    commit(&e, &e.bob, id, &l1).await?.into_result()?;
+    commit(&e, &e.alice, id, &l2).await?.into_result()?;
+    commit(&e, &e.bob, id, &s).await?.into_result()?;
+    advance_to(&e.worker, t.commit_end).await?;
+    reveal(&e, &e.alice, id, &l0).await?.into_result()?;
+    reveal(&e, &e.bob, id, &l1).await?.into_result()?;
+    reveal(&e, &e.alice, id, &l2).await?.into_result()?;
+    reveal(&e, &e.bob, id, &s).await?.into_result()?;
+    advance_to(&e.worker, t.reveal_end).await?;
+    clear(&e, id).await?.into_result()?;
+
+    let m = market(&e, id).await?;
+    assert_eq!(m["opening_price_cents"], 50);
+    assert_eq!(m["pairs"], (7 * ONE).to_string());
+    let b = bids(&e, id).await?;
+    assert_eq!(b[0]["filled_qty"], "5");
+    assert_eq!(b[1]["filled_qty"], "0");
+    assert_eq!(b[2]["filled_qty"], "2");
+    assert_eq!(b[3]["filled_qty"], "7");
+    assert_eq!(claims(&e, &e.alice, id, "Long").await?, 7 * ONE);
+    assert_eq!(claims(&e, &e.bob, id, "Long").await?, 0);
+    assert_eq!(claims(&e, &e.bob, id, "Short").await?, 7 * ONE);
+    // Alice: escrow 3.00 + 3.00, paid 7 x 0.50 = 3.50 -> 2.50 back.
+    // Bob: escrow 2.75 (unfilled) + 3.50, paid 7 x 0.50 = 3.50 -> 2.75 back.
+    assert_eq!(refund_balance(&e, &e.alice).await?, 2_500_000);
+    assert_eq!(refund_balance(&e, &e.bob).await?, 2_750_000);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_unrevealed_bid_refunded() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    let a0 = fusd_balance(&e, &e.alice).await?;
+    let b0 = fusd_balance(&e, &e.bob).await?;
+    let long = TestBid::new("Long", 10, 60, "never-revealed", 250_000);
+    let short = TestBid::new("Short", 10, 45, "s", 0);
+    commit(&e, &e.alice, id, &long).await?.into_result()?;
+    commit(&e, &e.bob, id, &short).await?.into_result()?;
+    advance_to(&e.worker, t.commit_end).await?;
+    reveal(&e, &e.bob, id, &short).await?.into_result()?;
+    advance_to(&e.worker, t.reveal_end).await?;
+    clear(&e, id).await?.into_result()?;
+
+    let m = market(&e, id).await?;
+    assert_eq!(m["status"], "Open");
+    assert!(m["opening_price_cents"].is_null(), "nothing matched");
+    assert_eq!(m["pairs"], "0");
+    assert_eq!(refund_balance(&e, &e.alice).await?, long.escrow);
+    assert_eq!(refund_balance(&e, &e.bob).await?, short.escrow);
+    withdraw(&e, &e.alice).await?.into_result()?;
+    withdraw(&e, &e.bob).await?.into_result()?;
+    assert_eq!(fusd_balance(&e, &e.alice).await?, a0);
+    assert_eq!(fusd_balance(&e, &e.bob).await?, b0);
+    assert_eq!(fusd_balance(&e, &e.flat.as_account().clone()).await?, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_wrong_salt_rejected() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    let long = TestBid::new("Long", 10, 60, "right-salt", 0);
+    commit(&e, &e.alice, id, &long).await?.into_result()?;
+    // Escrow covers exactly 10 x 60c; a bid that needs more is refused at reveal.
+    let under = TestBid { escrow: 1_000_000, ..TestBid::new("Long", 10, 60, "under", 0) };
+    commit(&e, &e.alice, id, &under).await?.into_result()?;
+    advance_to(&e.worker, t.commit_end).await?;
+
+    let wrong = TestBid { salt: "wrong-salt".to_string(), ..long.clone() };
+    let r = reveal(&e, &e.alice, id, &wrong).await?;
+    assert!(fails_with(&r, "ERR_BAD_REVEAL"), "{:?}", r.failures());
+    // Someone else cannot reveal Alice's bid, even with the right fields.
+    let r = reveal(&e, &e.bob, id, &long).await?;
+    assert!(fails_with(&r, "ERR_BAD_REVEAL"), "{:?}", r.failures());
+    let r = reveal(&e, &e.alice, id, &under).await?;
+    assert!(fails_with(&r, "ERR_ESCROW_TOO_LOW"), "{:?}", r.failures());
+
+    reveal(&e, &e.alice, id, &long).await?.into_result()?;
+    let r = reveal(&e, &e.alice, id, &long).await?;
+    assert!(fails_with(&r, "ERR_ALREADY_REVEALED"), "{:?}", r.failures());
+    let b = bids(&e, id).await?;
+    assert_eq!(b[0]["revealed"]["limit_cents"], 60);
+    assert!(b[1]["revealed"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_late_reveal_rejected() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 60, 60).await?;
+    let long = TestBid::new("Long", 10, 60, "s", 0);
+    commit(&e, &e.alice, id, &long).await?.into_result()?;
+    // Reveal before the commit window closes is refused.
+    let r = reveal(&e, &e.alice, id, &long).await?;
+    assert!(fails_with(&r, "ERR_REVEAL_NOT_OPEN"), "{:?}", r.failures());
+    // Clearing before the reveal window ends is refused.
+    let r = clear(&e, id).await?;
+    assert!(fails_with(&r, "ERR_REVEAL_NOT_ENDED"), "{:?}", r.failures());
+
+    advance_to(&e.worker, t.commit_end).await?;
+    // A commit after the window closes is refused and NEP-141 returns the fUSD.
+    let b0 = fusd_balance(&e, &e.bob).await?;
+    let late = TestBid::new("Short", 10, 45, "late", 0);
+    let r = commit(&e, &e.bob, id, &late).await?;
+    assert!(receipt_failed_with(&r, "ERR_COMMIT_ENDED"), "{:?}", r.failures());
+    assert_eq!(fusd_balance(&e, &e.bob).await?, b0);
+    assert_eq!(market(&e, id).await?["bid_count"], 1);
+
+    advance_to(&e.worker, t.reveal_end).await?;
+    let r = reveal(&e, &e.alice, id, &long).await?;
+    assert!(fails_with(&r, "ERR_REVEAL_ENDED"), "{:?}", r.failures());
+    clear(&e, id).await?.into_result()?;
+    assert_eq!(refund_balance(&e, &e.alice).await?, long.escrow);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auction_200_bids_clear_within_gas() -> anyhow::Result<()> {
+    use near_workspaces::operations::Function;
+    let e = setup().await?;
+    let (id, t) = create_auction_market(&e, 900, 600).await?;
+    // 100 Long bids from Alice and 100 Short bids from Bob, spread over all limits, so most
+    // bids leave a refund and the marginal fill is partial. The contract does not merge bids
+    // by account, so this costs the same gas as 200 different bidders.
+    let make = |side: &'static str, i: u64| {
+        let limit = 1 + ((i * 37) % 99) as u8;
+        TestBid::new(side, 1 + i % 7, limit, &format!("{side}-{i}"), i as u128 * 1_000)
+    };
+    let longs: Vec<TestBid> = (0..100).map(|i| make("Long", i)).collect();
+    let shorts: Vec<TestBid> = (0..100).map(|i| make("Short", i)).collect();
+
+    for (who, list) in [(&e.alice, &longs), (&e.bob, &shorts)] {
+        for chunk in list.chunks(6) {
+            let mut tx = who.batch(e.fusd.id());
+            for b in chunk {
+                tx = tx.call(
+                    Function::new("ft_transfer_call")
+                        .args_json(json!({"receiver_id": e.flat.id(), "amount": b.escrow.to_string(), "msg": commit_msg(id, b)}))
+                        .deposit(NearToken::from_yoctonear(1))
+                        .gas(Gas::from_tgas(45)),
+                );
+            }
+            let r = tx.transact().await?;
+            assert!(r.failures().is_empty(), "{:?}", r.failures());
+        }
+    }
+    assert_eq!(market(&e, id).await?["bid_count"], 200);
+    // Bid 201 is refused and refunded.
+    let extra = TestBid::new("Long", 1, 50, "extra", 0);
+    let r = commit(&e, &e.alice, id, &extra).await?;
+    assert!(receipt_failed_with(&r, "ERR_TOO_MANY_BIDS"), "{:?}", r.failures());
+
+    advance_to(&e.worker, t.commit_end).await?;
+    for (who, list) in [(&e.alice, &longs), (&e.bob, &shorts)] {
+        for chunk in list.chunks(20) {
+            let mut tx = who.batch(e.flat.id());
+            for b in chunk {
+                tx = tx.call(Function::new("reveal_bid").args_json(reveal_args(id, b)).gas(Gas::from_tgas(14)));
+            }
+            let r = tx.transact().await?;
+            assert!(r.failures().is_empty(), "{:?}", r.failures());
+        }
+    }
+
+    advance_to(&e.worker, t.reveal_end).await?;
+    let r = clear(&e, id).await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    // `outcome()` is only the transaction-to-receipt step; the function runs in the receipt
+    // executed by the flatrate account.
+    let clear_gas: u64 = r
+        .receipt_outcomes()
+        .iter()
+        .filter(|o| o.executor_id == *e.flat.id())
+        .map(|o| o.gas_burnt.as_gas())
+        .sum();
+    println!(
+        "CLEAR_200_GAS clear_auction receipt gas_burnt = {} ({:.2} TGas); transaction total = {} ({:.2} TGas)",
+        clear_gas,
+        clear_gas as f64 / 1e12,
+        r.total_gas_burnt.as_gas(),
+        r.total_gas_burnt.as_gas() as f64 / 1e12
+    );
+    assert!(clear_gas > 1_000_000_000_000, "measured the function receipt, not the conversion step");
+    assert!(clear_gas < 300_000_000_000_000);
+
+    // Each pair is backed by exactly $1 and fUSD is conserved.
+    let m = market(&e, id).await?;
+    let pairs: u128 = m["pairs"].as_str().unwrap().parse()?;
+    assert!(pairs > 0, "{m}");
+    assert_eq!(m["collateral"], m["pairs"]);
+    assert_eq!(claims(&e, &e.alice, id, "Long").await?, pairs);
+    assert_eq!(claims(&e, &e.bob, id, "Short").await?, pairs);
+    let ra = refund_balance(&e, &e.alice).await?;
+    let rb = refund_balance(&e, &e.bob).await?;
+    let escrow: u128 = longs.iter().chain(&shorts).map(|b| b.escrow).sum();
+    assert_eq!(pairs + ra + rb, escrow);
+    assert_eq!(fusd_balance(&e, &e.flat.as_account().clone()).await?, escrow);
+    println!(
+        "CLEAR_200_RESULT price_cents={} pairs={} refunds alice={} bob={}",
+        m["opening_price_cents"], pairs, ra, rb
+    );
     Ok(())
 }

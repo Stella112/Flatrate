@@ -26,7 +26,7 @@ test-unit:
 
 ## near-workspaces sandbox tests (needs `make build` first).
 test-sandbox: build
-	cargo test -p flatrate --test sandbox -- --test-threads=1
+	cargo test -p flatrate --test sandbox -- --test-threads=1 --nocapture
 
 ## Everything that runs locally without network writes or keys.
 test: test-shared test-unit test-sandbox

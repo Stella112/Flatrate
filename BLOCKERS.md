@@ -57,3 +57,7 @@ Latency and cost per call will be measured in the smoke test. Known so far: esti
 - Shadeform aggregates other clouds, including Verda, so the five sources are not fully independent.
 - The live docs (`llms-full.txt`) and the repo disagree on whether results are wrapped in `{success,result,error}`; the repo matches the deployed storage version. Confirm with the first real call.
 - Suggestion: the void path refunds 0.5/0.5. Fine for the core; no change proposed.
+
+## B6. Sandbox suite length vs the 10-minute `make verify` budget (Phase 2, not blocking yet)
+
+The sandbox suite took 402 s on the 2-core VPS (the 200-bid test alone ~140 s). `make verify` must finish in under 10 minutes and will also build the oracle and read testnet. A cold build adds several minutes on a fresh machine. Option for Phase 6: run sandbox tests in parallel (separate sandboxes per test are already isolated), or let `make verify` reuse prebuilt wasm. To decide in Phase 6.

@@ -122,3 +122,42 @@ exit=0
 - `make test` passes: PASS
 - `cargo near build` succeeds for fusd and flatrate (and mock-outlayer): PASS
 - Test output pasted here: PASS
+
+## Phase 2: sealed opening auction (2026-11-12)
+
+Contract: `commit_bid` (fUSD `ft_transfer_call`, msg `{"action":"commit_bid","market_id":"<id>","hash":"<64 hex>"}`), `reveal_bid`, `clear_auction` (uses `flatrate_shared::clear_auction`), `withdraw_refund`, views `get_bids`, `refund_balance_of`, `bid_hash`. Commitment: `sha256(borsh(market_id: u64, side: Side, qty: u64, limit_cents: u8, salt: String))`, `qty` in whole claims. At most 200 bids per auction.
+
+Changed from plan: `clear_auction` does not send refunds itself. 200 `ft_transfer` promises do not fit in one transaction's gas, so unused escrow (including unrevealed bids) is credited to the bidder's refund balance during clearing and paid by `withdraw_refund` (restored if the transfer fails).
+
+Run on the VPS (same setup as Phase 1):
+```
+$ CARGO_BUILD_JOBS=2 make test
+shared:   test result: ok. 18 passed; 0 failed
+fusd:     test result: ok. 3 passed; 0 failed
+flatrate: test tests::hex_round_trip_and_rejects_bad_input ... ok
+          test tests::commitment_depends_on_every_field ... ok
+          test result: ok. 2 passed; 0 failed
+sandbox:  test auction_two_bid_match ... ok
+          test auction_tie_break ... ok
+          test auction_partial_fill ... ok
+          test auction_unrevealed_bid_refunded ... ok
+          test auction_wrong_salt_rejected ... ok
+          test auction_late_reveal_rejected ... ok
+          test auction_200_bids_clear_within_gas ... ok
+          (+ the 12 Phase 1 tests, all ok)
+          test result: ok. 19 passed; 0 failed; finished in 402.39s
+exit=0
+```
+
+The first run printed the gas of the transaction-to-receipt step (0.31 TGas), not the function call. The test was fixed to sum the receipts executed by the flatrate account and to fail if it measures under 1 TGas, then re-run:
+```
+$ cargo test -p flatrate --test sandbox auction_200 -- --nocapture
+CLEAR_200_GAS clear_auction receipt gas_burnt = 35773858897951 (35.77 TGas); transaction total = 36083348909401 (36.08 TGas)
+CLEAR_200_RESULT price_cents=50 pairs=197000000 refunds alice=103080000 bob=103080000
+test auction_200_bids_clear_within_gas ... ok
+```
+200 revealed bids (100 Long, 100 Short, limits 1-99), 197 pairs minted at 50c, fUSD conserved (pairs + refunds = total escrow). 35.77 TGas of the 300 TGas limit.
+
+### Acceptance
+- All auction tests pass: PASS
+- Gas used by the 200-bid clear recorded: PASS (35.77 TGas)

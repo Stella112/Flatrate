@@ -1,7 +1,7 @@
 //! Flatrate: GPU price claims settled on an OutLayer-attested median.
 //!
-//! Phase 1: markets, claims ledger, observations through the OutLayer callback, settlement,
-//! redemption and the void path. The sealed auction (Phase 2) and Cover Notes (Phase 4)
+//! Markets, the sealed commit-reveal opening auction, the claims ledger, observations through
+//! the OutLayer callback, settlement, redemption and the void path. Cover Notes (Phase 4)
 //! build on this file.
 
 use flatrate_shared as math;
@@ -26,6 +26,10 @@ const GAS_ON_OBSERVATION: Gas = Gas::from_tgas(30);
 const MAX_ORACLE_OUTPUT: usize = 16_384;
 /// Minimum number of sources that must return a price.
 pub const MIN_SOURCES_OK: u8 = 3;
+/// Most bids one auction accepts, so `clear_auction` fits in one transaction's gas.
+pub const MAX_BIDS: u32 = 200;
+/// One whole claim in claim units (6 decimals, like fUSD).
+const CLAIM_UNITS: u128 = math::PAIR_MICROS as u128;
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -33,6 +37,80 @@ enum StorageKey {
     Markets,
     Claims,
     Pending,
+    Bids,
+    BidIndex,
+    Refunds,
+}
+
+/// A sealed bid. `hash = sha256(borsh(market_id: u64, side: Side, qty: u64, limit_cents: u8,
+/// salt: String))`; `qty` is whole claims; the escrow must cover `qty x limit_cents x 10_000`.
+#[near(serializers = [borsh])]
+#[derive(Clone, Debug)]
+pub struct Bid {
+    pub bidder: AccountId,
+    pub hash: [u8; 32],
+    pub escrow: u128,
+    pub committed_at: u64,
+    pub revealed: Option<RevealedBid>,
+    /// Set by `clear_auction`.
+    pub filled_qty: u64,
+    pub cost: u128,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct RevealedBid {
+    pub side: Side,
+    pub qty: U64,
+    pub limit_cents: u8,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct BidView {
+    pub index: u32,
+    pub bidder: AccountId,
+    pub hash: String,
+    pub escrow: U128,
+    pub committed_at: U64,
+    pub revealed: Option<RevealedBid>,
+    pub filled_qty: U64,
+    pub cost: U128,
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0xf) as usize] as char);
+    }
+    s
+}
+
+fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
+    let b = s.as_bytes();
+    if b.len() != 64 {
+        return None;
+    }
+    let nib = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = (nib(b[2 * i])? << 4) | nib(b[2 * i + 1])?;
+    }
+    Some(out)
+}
+
+/// The commitment for a bid. Exposed as a view (`bid_hash`) so clients can check their hashing.
+pub fn bid_commitment(market_id: u64, side: Side, qty: u64, limit_cents: u8, salt: &str) -> [u8; 32] {
+    let bytes = near_sdk::borsh::to_vec(&(market_id, side, qty, limit_cents, salt.to_string()))
+        .unwrap_or_else(|_| env::panic_str("ERR_BORSH"));
+    env::sha256_array(&bytes)
 }
 
 #[near(serializers = [borsh, json])]
@@ -104,6 +182,8 @@ pub struct Market {
     pub pairs: u128,
     /// fUSD held for this market, micro-units.
     pub collateral: u128,
+    /// Sealed bids committed to the opening auction.
+    pub bid_count: u32,
 }
 
 #[near(serializers = [borsh])]
@@ -145,6 +225,7 @@ pub struct MarketView {
     pub opening_price_cents: Option<u8>,
     pub pairs: U128,
     pub collateral: U128,
+    pub bid_count: u32,
 }
 
 impl From<&Market> for MarketView {
@@ -177,6 +258,7 @@ impl From<&Market> for MarketView {
             opening_price_cents: m.opening_price_cents,
             pairs: U128(m.pairs),
             collateral: U128(m.collateral),
+            bid_count: m.bid_count,
         }
     }
 }
@@ -233,6 +315,8 @@ pub struct OracleOutput {
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum TransferMsg {
     MintPair { market_id: U64 },
+    /// `hash`: 64 hex characters, see `Bid`.
+    CommitBid { market_id: U64, hash: String },
 }
 
 #[near(serializers = [borsh])]
@@ -258,6 +342,12 @@ pub struct Contract {
     claims: LookupMap<ClaimKey, u128>,
     pending: LookupMap<u64, PendingObservation>,
     next_pending_id: u64,
+    /// (market_id, bid index) -> bid. Index order is commit order.
+    bids: LookupMap<(u64, u32), Bid>,
+    /// (market_id, bidder, hash) -> bid index, for `reveal_bid`.
+    bid_index: LookupMap<(u64, AccountId, [u8; 32]), u32>,
+    /// fUSD owed back to an account (unused auction escrow), withdrawn with `withdraw_refund`.
+    refunds: LookupMap<AccountId, u128>,
 }
 
 fn emit(event: &str, data: serde_json::Value) {
@@ -293,6 +383,9 @@ impl Contract {
             claims: LookupMap::new(StorageKey::Claims),
             pending: LookupMap::new(StorageKey::Pending),
             next_pending_id: 0,
+            bids: LookupMap::new(StorageKey::Bids),
+            bid_index: LookupMap::new(StorageKey::BidIndex),
+            refunds: LookupMap::new(StorageKey::Refunds),
         }
     }
 
@@ -346,6 +439,7 @@ impl Contract {
             opening_price_cents: None,
             pairs: 0,
             collateral: 0,
+            bid_count: 0,
         });
         emit("market_created", json!({"market_id": U64(id)}));
         U64(id)
@@ -359,17 +453,183 @@ impl Contract {
         self.oracle_version_key = version_key;
     }
 
-    // ---------- auction (Phase 1: no bids yet) ----------
+    // ---------- sealed opening auction ----------
 
-    /// Anyone, after the reveal window. Phase 1 has no bids, so the market opens with no
-    /// opening price. Phase 2 replaces this with the sealed-bid clearing.
+    fn internal_commit_bid(&mut self, market_id: u64, bidder: &AccountId, escrow: u128, hash: &str) {
+        let mut m = self.market(market_id);
+        require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
+        let now = env::block_timestamp();
+        require!(now < m.auction_commit_end, "ERR_COMMIT_ENDED");
+        require!(escrow > 0, "ERR_ZERO_AMOUNT");
+        require!(m.bid_count < MAX_BIDS, "ERR_TOO_MANY_BIDS");
+        let hash = hex_decode_32(hash).unwrap_or_else(|| env::panic_str("ERR_BAD_HASH"));
+        let key = (market_id, bidder.clone(), hash);
+        require!(!self.bid_index.contains_key(&key), "ERR_DUPLICATE_COMMIT");
+        let index = m.bid_count;
+        self.bids.insert(
+            (market_id, index),
+            Bid { bidder: bidder.clone(), hash, escrow, committed_at: now, revealed: None, filled_qty: 0, cost: 0 },
+        );
+        self.bid_index.insert(key, index);
+        m.bid_count += 1;
+        self.save(m);
+        emit(
+            "bid_committed",
+            json!({"market_id": U64(market_id), "index": index, "bidder": bidder, "escrow": U128(escrow), "hash": hex_encode(&hash)}),
+        );
+    }
+
+    /// During the reveal window. Opens the caller's commitment; valid only if the hash matches
+    /// and the escrow covers `qty x limit_cents x 10_000`.
+    pub fn reveal_bid(&mut self, market_id: U64, side: Side, qty: U64, limit_cents: u8, salt: String) {
+        let m = self.market(market_id.0);
+        require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
+        let now = env::block_timestamp();
+        require!(now >= m.auction_commit_end, "ERR_REVEAL_NOT_OPEN");
+        require!(now < m.auction_reveal_end, "ERR_REVEAL_ENDED");
+        require!(qty.0 > 0 && (1..=99).contains(&limit_cents), "ERR_BAD_BID");
+        let bidder = env::predecessor_account_id();
+        let hash = bid_commitment(market_id.0, side, qty.0, limit_cents, &salt);
+        let index = self
+            .bid_index
+            .get(&(market_id.0, bidder.clone(), hash))
+            .copied()
+            .unwrap_or_else(|| env::panic_str("ERR_BAD_REVEAL"));
+        let mut bid = self.bids.get(&(market_id.0, index)).cloned().unwrap();
+        require!(bid.revealed.is_none(), "ERR_ALREADY_REVEALED");
+        let need = qty.0 as u128 * limit_cents as u128 * math::CENT_MICROS as u128;
+        require!(need <= bid.escrow, "ERR_ESCROW_TOO_LOW");
+        bid.revealed = Some(RevealedBid { side, qty, limit_cents });
+        self.bids.insert((market_id.0, index), bid);
+        emit(
+            "bid_revealed",
+            json!({"market_id": market_id, "index": index, "bidder": bidder, "side": side, "qty": qty, "limit_cents": limit_cents}),
+        );
+    }
+
+    /// Anyone, after the reveal window. Uniform-price clearing (`flatrate_shared::clear_auction`):
+    /// matched bids get claims, every unused escrow (including unrevealed bids) is credited to
+    /// the bidder's refund balance, and the market opens with the opening price recorded.
     pub fn clear_auction(&mut self, market_id: U64) {
         let mut m = self.market(market_id.0);
         require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
         require!(env::block_timestamp() >= m.auction_reveal_end, "ERR_REVEAL_NOT_ENDED");
+
+        let mut bids: Vec<Bid> = (0..m.bid_count)
+            .map(|i| self.bids.get(&(market_id.0, i)).cloned().unwrap())
+            .collect();
+        // Revealed bids go to the clearing; `id` is the commit index.
+        let revealed: Vec<math::AuctionBid> = bids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                b.revealed.as_ref().map(|r| math::AuctionBid {
+                    id: i as u64,
+                    side: match r.side {
+                        Side::Long => math::BidSide::Long,
+                        Side::Short => math::BidSide::Short,
+                    },
+                    qty: r.qty.0,
+                    limit_cents: r.limit_cents,
+                    escrow_micros: b.escrow,
+                })
+            })
+            .collect();
+        let c = math::clear_auction(&revealed);
+        let mut refunded: Vec<u128> = bids.iter().map(|b| b.escrow).collect();
+        for f in &c.fills {
+            let i = f.id as usize;
+            refunded[i] = f.refund_micros;
+            if f.filled_qty > 0 {
+                let side = bids[i].revealed.as_ref().unwrap().side;
+                let bidder = bids[i].bidder.clone();
+                self.add_claim(market_id.0, side, &bidder, f.filled_qty as u128 * CLAIM_UNITS);
+                bids[i].filled_qty = f.filled_qty;
+                bids[i].cost = f.cost_micros;
+            }
+        }
+        for (i, b) in bids.into_iter().enumerate() {
+            if refunded[i] > 0 {
+                let cur = self.refunds.get(&b.bidder).copied().unwrap_or(0);
+                self.refunds.insert(b.bidder.clone(), cur + refunded[i]);
+            }
+            if b.filled_qty > 0 {
+                self.bids.insert((market_id.0, i as u32), b);
+            }
+        }
+        let minted = c.matched as u128 * CLAIM_UNITS;
+        m.pairs += minted;
+        m.collateral += minted;
+        m.opening_price_cents = c.price_cents;
         m.status = MarketStatus::Open;
-        emit("auction_cleared", json!({"market_id": market_id, "price_cents": null, "matched": U128(0)}));
+        emit(
+            "auction_cleared",
+            json!({"market_id": market_id, "price_cents": c.price_cents, "matched": U128(minted),
+                   "bids": m.bid_count, "revealed": revealed.len()}),
+        );
         self.save(m);
+    }
+
+    /// Sends the caller's whole refund balance (unused auction escrow) in fUSD.
+    pub fn withdraw_refund(&mut self) -> U128 {
+        let account_id = env::predecessor_account_id();
+        let amount = self.refunds.remove(&account_id).unwrap_or(0);
+        require!(amount > 0, "ERR_NOTHING_TO_REFUND");
+        emit("refund_withdrawn", json!({"account_id": account_id, "amount": U128(amount)}));
+        Promise::new(self.fusd_id.clone())
+            .function_call(
+                "ft_transfer".to_string(),
+                json!({"receiver_id": account_id, "amount": U128(amount), "memo": "flatrate refund"})
+                    .to_string()
+                    .into_bytes(),
+                NearToken::from_yoctonear(1),
+                GAS_FT_TRANSFER,
+            )
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_ON_PAYOUT).on_refund(account_id, U128(amount)))
+            .detach();
+        U128(amount)
+    }
+
+    /// Restores the refund balance if the fUSD transfer failed.
+    #[private]
+    pub fn on_refund(&mut self, account_id: AccountId, amount: U128, #[callback_result] result: Result<(), PromiseError>) -> bool {
+        if result.is_ok() {
+            return true;
+        }
+        let cur = self.refunds.get(&account_id).copied().unwrap_or(0);
+        self.refunds.insert(account_id.clone(), cur + amount.0);
+        emit("refund_failed", json!({"account_id": account_id, "amount": amount}));
+        false
+    }
+
+    pub fn refund_balance_of(&self, account_id: AccountId) -> U128 {
+        U128(self.refunds.get(&account_id).copied().unwrap_or(0))
+    }
+
+    /// The commitment hash (hex) for these bid fields. Lets clients check their own hashing.
+    pub fn bid_hash(&self, market_id: U64, side: Side, qty: U64, limit_cents: u8, salt: String) -> String {
+        hex_encode(&bid_commitment(market_id.0, side, qty.0, limit_cents, &salt))
+    }
+
+    pub fn get_bids(&self, market_id: U64, from_index: Option<u32>, limit: Option<u32>) -> Vec<BidView> {
+        let m = self.market(market_id.0);
+        let from = from_index.unwrap_or(0);
+        let limit = limit.unwrap_or(50).min(200);
+        (from..m.bid_count)
+            .take(limit as usize)
+            .filter_map(|i| {
+                self.bids.get(&(market_id.0, i)).map(|b| BidView {
+                    index: i,
+                    bidder: b.bidder.clone(),
+                    hash: hex_encode(&b.hash),
+                    escrow: U128(b.escrow),
+                    committed_at: U64(b.committed_at),
+                    revealed: b.revealed.clone(),
+                    filled_qty: U64(b.filled_qty),
+                    cost: U128(b.cost),
+                })
+            })
+            .collect()
     }
 
     // ---------- claims ledger ----------
@@ -386,6 +646,9 @@ impl Contract {
             serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("ERR_BAD_MSG"));
         match parsed {
             TransferMsg::MintPair { market_id } => self.internal_mint_pair(market_id.0, &sender_id, amount.0),
+            TransferMsg::CommitBid { market_id, hash } => {
+                self.internal_commit_bid(market_id.0, &sender_id, amount.0, &hash)
+            }
         }
         PromiseOrValue::Value(U128(0))
     }
@@ -763,5 +1026,32 @@ impl Contract {
                 U128(restore_pairs),
             ))
             .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_round_trip_and_rejects_bad_input() {
+        let h = [0xabu8; 32];
+        let s = hex_encode(&h);
+        assert_eq!(s.len(), 64);
+        assert_eq!(hex_decode_32(&s), Some(h));
+        assert_eq!(hex_decode_32(&s.to_uppercase()), Some(h));
+        assert_eq!(hex_decode_32(&s[..62]), None);
+        assert_eq!(hex_decode_32(&format!("zz{}", &s[2..])), None);
+    }
+
+    #[test]
+    fn commitment_depends_on_every_field() {
+        let base = bid_commitment(0, Side::Long, 10, 60, "salt");
+        assert_eq!(base, bid_commitment(0, Side::Long, 10, 60, "salt"));
+        assert_ne!(base, bid_commitment(1, Side::Long, 10, 60, "salt"));
+        assert_ne!(base, bid_commitment(0, Side::Short, 10, 60, "salt"));
+        assert_ne!(base, bid_commitment(0, Side::Long, 11, 60, "salt"));
+        assert_ne!(base, bid_commitment(0, Side::Long, 10, 61, "salt"));
+        assert_ne!(base, bid_commitment(0, Side::Long, 10, 60, "salt2"));
     }
 }
