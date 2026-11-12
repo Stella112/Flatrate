@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 /**
- * Local development only: serves ../api/*.js (the Vercel functions) under /api so the guest flow
+ * Local development only: serves api/*.js (the Vercel functions) under /api so the guest flow
  * can be tried with `npm run dev`. On Vercel the platform runs those files itself.
  */
 function localApi(): Plugin {
@@ -32,7 +32,7 @@ function localApi(): Plugin {
           },
         });
         try {
-          const file = pathToFileURL(resolve(__dirname, `../api/${m[1]}.js`)).href + `?t=${Date.now()}`;
+          const file = pathToFileURL(resolve(__dirname, `api/${m[1]}.js`)).href + `?t=${Date.now()}`;
           const mod = await import(/* @vite-ignore */ file);
           await mod.default(vreq, vres);
         } catch (e) {

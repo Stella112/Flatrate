@@ -1,4 +1,4 @@
-// POST /api/sponsor {"account_id": "<64 hex>"}
+// Vercel function (project Root Directory: web). POST /api/sponsor {"account_id": "<64 hex>"}
 // Creates the guest's implicit account by sending it 0.5 testnet NEAR, registers it on fUSD and
 // gives it 100 fUSD (the sponsor mints them from the public faucet and passes them on).
 // Env (set in the hosting provider, never in the repo): SPONSOR_ACCOUNT_ID, SPONSOR_PRIVATE_KEY.
