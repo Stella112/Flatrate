@@ -4,7 +4,7 @@ SHELL := /bin/bash
 WASM_DIR := target/wasm
 CONTRACTS := fusd mock-outlayer flatrate
 
-.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm verify clean-wasm
+.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm oracle-repro oracle-runner vendor verify demo-scripted keeper clean-wasm
 
 ## Build all contract wasm files into target/wasm with cargo-near.
 build:
@@ -39,6 +39,31 @@ test-sandbox: build
 
 ## Everything that runs locally without network writes or keys.
 test: test-shared test-unit test-oracle test-sandbox
+
+## OutLayer sources (build script and test runner), pinned to the commit read in Phase 0.
+vendor:
+	@test -d vendor/near-outlayer || git clone -q https://github.com/fastnear/near-outlayer vendor/near-outlayer
+	git -C vendor/near-outlayer checkout -q 2d50bfab14389857e6e50e84e76d5652b944e1cc
+
+## Reproducible oracle build in OutLayer's pinned compiler image (needs docker); prints the sha256.
+oracle-repro: vendor
+	bash scripts/oracle-reproducible.sh --twice
+
+## OutLayer's local WASI test runner (wasi-test), used by make verify. Takes several minutes once.
+oracle-runner: vendor
+	cd vendor/near-outlayer/wasi-examples/wasi-test-runner && cargo build --release
+
+## Everything a reviewer needs: tests, builds, oracle, read-only testnet checks, a table.
+verify:
+	bash scripts/verify.sh
+
+## Replays testnet market 2 from fixtures/demo/market-2.json in the sandbox (no keys, no network).
+demo-scripted: build
+	cargo test -p flatrate --test sandbox scripted_demo_replays_market_2 -- --nocapture
+
+## One keeper pass: KEEPER_ACCOUNT=<you>.testnet make keeper
+keeper:
+	node scripts/keeper.mjs --once
 
 clean-wasm:
 	rm -rf $(WASM_DIR)

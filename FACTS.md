@@ -196,3 +196,16 @@ Both: floor `2_400_000`, cap `5_600_000` (section 5).
 | fUSD registration cost | `storage_balance_bounds` min = max = 1250000000000000000000 (0.00125 NEAR) | view call |
 | 1Click auth | OpenAPI `securitySchemes`: bearer JWT | `https://1click.chaindefuser.com/docs/v0/openapi.yaml` |
 | Hosted URL | https://flatrate-gpu.vercel.app/ (Vercel, Root Directory `web`) | Maris; curl HTTP 200 |
+
+## 11. Proof layer (Phase 6, 2026-11-12)
+
+| Fact | Value | Source |
+|---|---|---|
+| Reproducible oracle build | `bash scripts/oracle-reproducible.sh --twice` (OutLayer `scripts/build_github_wasm.sh`, image `outlayer/wasmedge-compiler@sha256:d9eb7bd9bab6c46b77f309ec33e94ca112883268a848dd1929289fade799cd27`, amd64, rustc 1.97.1) -> both builds `6c252d52804cb3f356ab1f5718069a57ab2d2fb96ad14e21eb18277fbcdaaf44` (455093 bytes) | VPS run, `~/oracle-repro.log` |
+| Same wasm in the runner | live: 51,678,172 instructions, median 3980000; fixtures: 69,517,754 instructions, median 3980000 | `wasi-test` on the VPS |
+| Version deployed | `outlayer upload` tx `oScKA25if4Zucp7aPmMurGoptnw4tEfhb9v9hhJMY46`; `add_version` tx `BZtMEPzr1c...` (NearBlocks list for flatrate-maris.testnet); `get_version` -> `wasm_hash 6c252d52...`, `is_active true` | CLI, view call |
+| Pinned on the contract | `set_oracle_version` tx `4C9ipap9H8sJXuBjXZYd6mX75Dra38sNg3SmewjRLyiC`; `get_config.oracle_version_key = 6c252d52...` | view call |
+| Weekly market 5 | create `FyySyexoYXA2Km48EmFr7bn3a28Tm7A26X7evfEHG8xH`; bids `HSNd9z5L...`, `3pNhQjRV...`; reveals `8tKfY6fV7r1vo6GyGWpkpnkwzRJqWKVQg84GsubN1uhW`, `BjTroSf5ZJAXh6anrqKriRnxkmy1evzdmuWfvSfmPRc4`; clear `Be51xoU5xjwvcp6mcswjxrivmfZaAwKifNCVXcxNAnHN` (50c); period 2026-11-12 21:49:06 to 2026-11-19 22:00 UTC, min 7 obs | near-cli output |
+| Standing note for the "Steal a note" button | Cover Note #2 (5 Long, market 5): mint `9n53yEweMve5bykZyFmjwdhi2atSAXhAPZJtVBPnTTPJ`, wrap `HsbDndYYSUNPLEy4QV6weh7WXuq5qFg7UKSX7R3h2dpa`, transfer to `holder.flatrate-maris.testnet` `BvA9qWATb3cHPR3fDPSNFarJRnA4c9k8HVXxrDBJ4iuv` | near-cli output |
+| Keeper | implicit account `54cf686374f338d49d9a8e12e9912b6fa7f10ee7d5fcc561b6faa4abfac6158e`, key generated on the VPS (`near account create-account fund-later use-auto-generation`), funded 1 NEAR tx `6YZtKcHM2VEiPeUhfeEzC9yzvXsaW6B9MM7bPXKvtw84`; cron `15 */6 * * *` runs `scripts/keeper-cron.sh` for market 5; first pass tx `CxdEPMiCdqvSrDyaxvsQH38ZvX6KEdYLYJRWkY6MpxWF` (OutLayer request 34321) | VPS crontab and log |
+| near-cli `tokens send-near` to a new implicit account | waits for an interactive confirmation; `transaction construct-transaction ... add-action transfer` sends without asking | observed 2026-11-12 |

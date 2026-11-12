@@ -1129,3 +1129,101 @@ async fn migrate_from_phase2_state_keeps_markets_and_claims() -> anyhow::Result<
     assert_eq!(tok["owner_id"], alice.id().to_string());
     Ok(())
 }
+
+// ---------------- Scripted demo: replay testnet market 2 from fixtures ----------------
+
+/// `make demo-scripted`. Replays market 2 from `fixtures/demo/market-2.json` (recorded from
+/// testnet by scripts/record-demo-fixture.mjs) against the sandbox: same floor and cap, the same
+/// revealed bids, and each recorded OutLayer output fed through mock-outlayer. The result must
+/// equal what testnet recorded: opening price, pairs, every observation, the Long payout and the
+/// redemption. No network, no keys; the same result every run.
+#[tokio::test]
+async fn scripted_demo_replays_market_2() -> anyhow::Result<()> {
+    let path = format!("{}/../../fixtures/demo/market-2.json", env!("CARGO_MANIFEST_DIR"));
+    let fx: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let recorded = &fx["market"];
+    let floor: u64 = recorded["floor_micros"].as_str().unwrap().parse()?;
+    let cap: u64 = recorded["cap_micros"].as_str().unwrap().parse()?;
+    println!("SCRIPTED DEMO (fixture recorded {} from {})", fx["recorded_at"], fx["source"]);
+
+    let e = setup().await?;
+    let t0 = now(&e.worker).await?;
+    let (commit_end, reveal_end) = (t0 + 60 * SEC, t0 + 120 * SEC);
+    let period_end = reveal_end + 200 * SEC;
+    let id: u64 = e
+        .owner
+        .call(e.flat.id(), "create_market")
+        .args_json(json!({
+            "index": "H100_HOURLY", "floor_micros": floor.to_string(), "cap_micros": cap.to_string(),
+            "auction_commit_end": commit_end.to_string(), "auction_reveal_end": reveal_end.to_string(),
+            "period_start": reveal_end.to_string(), "period_end": period_end.to_string(),
+            "min_observations": recorded["min_observations"], "void_after": (period_end + 200 * SEC).to_string(),
+        }))
+        .transact().await?.into_result()?.json::<String>()?.parse()?;
+    println!("  1. market created: floor {floor}, cap {cap}");
+
+    // The recorded bids, revealed; Alice places the Long ones, Bob the Short ones.
+    let bids: Vec<TestBid> = fx["bids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let r = &b["revealed"];
+            let side = if r["side"] == "Long" { "Long" } else { "Short" };
+            let escrow: u128 = b["escrow"].as_str().unwrap().parse().unwrap();
+            let mut t = TestBid::new(side, r["qty"].as_str().unwrap().parse().unwrap(), r["limit_cents"].as_u64().unwrap() as u8, &format!("replay-{i}"), 0);
+            t.escrow = escrow;
+            t
+        })
+        .collect();
+    for b in &bids {
+        let who = if b.side == "Long" { &e.alice } else { &e.bob };
+        commit(&e, who, id, b).await?.into_result()?;
+    }
+    println!("  2. {} sealed bids committed", bids.len());
+    advance_to(&e.worker, commit_end).await?;
+    for b in &bids {
+        let who = if b.side == "Long" { &e.alice } else { &e.bob };
+        reveal(&e, who, id, b).await?.into_result()?;
+    }
+    println!("  3. bids revealed: {}", bids.iter().map(|b| format!("{} {} @ {}c", b.side, b.qty, b.limit)).collect::<Vec<_>>().join(", "));
+    advance_to(&e.worker, reveal_end).await?;
+    clear(&e, id).await?.into_result()?;
+    let m = market(&e, id).await?;
+    assert_eq!(m["opening_price_cents"], recorded["opening_price_cents"], "opening price matches testnet");
+    assert_eq!(m["pairs"], recorded["pairs"], "pairs match testnet");
+    println!("  4. auction cleared at {}c, {} pairs (testnet: {}c, {})", m["opening_price_cents"], m["pairs"], recorded["opening_price_cents"], recorded["pairs"]);
+
+    // Each recorded OutLayer output, replayed in order.
+    let outputs: Vec<&Value> = fx["steps"].as_array().unwrap().iter().filter_map(|s| s.get("oracle").filter(|o| !o.is_null())).collect();
+    for (i, out) in outputs.iter().enumerate() {
+        let r = observe(&e, id, "Respond", Some(out.to_string())).await?;
+        assert!(has_log(&r, "observation_recorded"), "{:?}", r.logs());
+        println!("  5.{} observation: median {} from {} sources, OutLayer request {}", i + 1, out["price_micros"], out["sources"].as_array().unwrap().iter().filter(|s| !s["price_micros"].is_null()).count(), out["request_id"]);
+    }
+    let m = market(&e, id).await?;
+    let ours: Vec<&Value> = m["observations"].as_array().unwrap().iter().map(|o| &o["price_micros"]).collect();
+    let theirs: Vec<&Value> = recorded["observations"].as_array().unwrap().iter().map(|o| &o["price_micros"]).collect();
+    assert_eq!(ours, theirs, "observed prices match testnet");
+
+    advance_to(&e.worker, period_end).await?;
+    settle(&e, &e.alice, id).await?.into_result()?;
+    let status = market(&e, id).await?["status"].clone();
+    assert_eq!(status, recorded["status"], "settlement matches testnet");
+    println!("  6. settled: {status} (testnet: {})", recorded["status"]);
+
+    let a0 = fusd_balance(&e, &e.alice).await?;
+    let b0 = fusd_balance(&e, &e.bob).await?;
+    redeem(&e, &e.alice, id).await?.into_result()?;
+    redeem(&e, &e.bob, id).await?.into_result()?;
+    let (ga, gb) = (fusd_balance(&e, &e.alice).await? - a0, fusd_balance(&e, &e.bob).await? - b0);
+    let lp = recorded["status"]["Settled"]["long_payout_micros"].as_u64().unwrap() as u128;
+    let pairs: u128 = recorded["pairs"].as_str().unwrap().parse()?;
+    assert_eq!(ga, pairs * lp / ONE);
+    assert_eq!(gb, pairs * (ONE - lp) / ONE);
+    assert_eq!(market(&e, id).await?["collateral"], "0");
+    println!("  7. redeemed: Long holder {ga}, Short holder {gb} fUSD units; collateral 0");
+    println!("SCRIPTED DEMO PASS: sandbox replay equals testnet market 2");
+    Ok(())
+}

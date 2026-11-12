@@ -66,10 +66,18 @@ Latency and cost per call will be measured in the smoke test. Known so far: esti
 
 The sandbox suite took 402 s on the 2-core VPS (the 200-bid test alone ~140 s). `make verify` must finish in under 10 minutes and will also build the oracle and read testnet. A cold build adds several minutes on a fresh machine. Option for Phase 6: run sandbox tests in parallel (separate sandboxes per test are already isolated), or let `make verify` reuse prebuilt wasm. To decide in Phase 6.
 
-## B7. Reproducible oracle hash for `make verify` (Phase 6, not blocking yet)
+## B7. Reproducible oracle hash for `make verify`: RESOLVED 2026-11-12
+
+The oracle is now built with OutLayer's pinned compiler image (`scripts/oracle-reproducible.sh`); two clean builds give `6c252d52...`, which is the version pinned for new markets (weekly market 5). Markets 0-4 keep `f55f2700...` (same source, plain cargo build); `make verify` checks that each pinned version is registered on OutLayer as the wasm with that hash. The reproducibility check needs Docker; without it the row says SKIP.
+
+Original note:
 
 `make verify` must check that the pinned version (`f55f2700...`) equals the hash of `oracle/` built from this commit. The current wasm was built with plain `cargo build` on the VPS (rustc 1.98.1). A judge's machine with another rustc may produce different bytes. Options: pin the toolchain with `rust-toolchain.toml` and rebuild/redeploy, or use OutLayer's reproducible Docker build (`scripts/build_github_wasm.sh`, docs/CLI.md) and redeploy that version. To decide in Phase 6; markets keep the version pinned at creation, so a new version needs new markets.
 
 ## B8. 1Click quote endpoint timing out (2026-11-12 ~20:20 UTC, not ours)
 
 `POST https://1click.chaindefuser.com/v0/quote` with the exact Phase 0 request (`fixtures/1click-quote-request.json`, fresh deadline) now answers HTTP 500 `Failed to receive response within timeout of 25000ms for exchange "1Click-API:api-exchange" and routing key "quote"` (correlationId `58b40147-160f-4209-8e94-e208b7d80b23`). The same request returned a quote at 00:10 UTC. The Pay page shows 1Click's error and offers the recorded quote, labelled "recorded". Re-check before submission.
+
+## B9. Flatrate description page could not be read
+
+`https://claude.ai/artifact/FdtYGwJkuJcGs1PFtqycHq` (named in CLAUDE.md as the product description with the Demo section) answers "artifact not found or not shared with you" for this account. `docs/demo-script.md` follows the CLAUDE.md brief instead; Maris should check it against that page.

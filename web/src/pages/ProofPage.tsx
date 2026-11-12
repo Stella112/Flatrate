@@ -6,6 +6,7 @@ import { listObservationTxs, readObservationTx, type ObservationTx } from "../pr
 import { near, usd, utc } from "../format";
 import type { OracleOutput } from "../types";
 import { Card, TxLink, useAsync } from "../ui";
+import { AttackPanel } from "../Attacks";
 
 export function ProofPage() {
   const { demo, step } = useApp();
@@ -63,6 +64,8 @@ export function ProofPage() {
           Trust note: OutLayer's own governance still runs on keys its operators hold (near-outlayer docs/NON_CUSTODIAL.md).
         </p>
       </Card>
+
+      <AttackPanel />
 
       {txs.error && <Card><p className="err">Could not load transactions: {txs.error}</p></Card>}
       {markets.data
