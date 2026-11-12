@@ -30,7 +30,11 @@ Proposed equivalent (same security, same error names):
 - The oracle module reads `NEAR_REQUEST_ID` and returns it in its output; the contract stores it as `Observation.outlayer_request`, so the Proof page can show the real OutLayer request id.
 - Attack button "Fake price" (direct call to `on_observation`) still fails with `ERR_NOT_OUTLAYER`.
 
-## B2. OutLayer testnet smoke test not run (needs accounts from Maris)
+## B2. OutLayer testnet smoke test not run (needs accounts from Maris): RESOLVED 2026-11-12
+
+Maris created `flatrate-maris.testnet` and logged in the OutLayer CLI. Smoke test done through the real project: tx `4zoELfFtWriQPepF2jcc8q1abfWtHWpVjDjXQNn7ccmt`, 12 s, ~0.002 NEAR (FACTS.md 9.3). The local `wasi-test-runner` was built and used on the VPS.
+
+Original note:
 
 Phase 0 acceptance needs one successful OutLayer testnet transaction hash. Not done because:
 - No root testnet account named yet; `~/.near-credentials/testnet` does not exist on this machine.
@@ -40,7 +44,7 @@ Phase 0 acceptance needs one successful OutLayer testnet transaction hash. Not d
 
 Latency and cost per call will be measured in the smoke test. Known so far: estimated deposit 0.0070001 NEAR at default limits (FACTS.md 3.1).
 
-## B3. GitHub repo `Stella112/flatrate` does not exist
+## B3. GitHub repo `Stella112/flatrate` does not exist: RESOLVED 2026-11-12 (created by Maris as `Stella112/Flatrate`, pushed)
 
 `gh repo view Stella112/flatrate` -> "Could not resolve to a Repository". The local folder `C:\nearflatrate` was `git init`-ed with branch `main`; nothing pushed. Creating a public repo is for Maris (or Claude, on an explicit OK).
 
@@ -61,3 +65,7 @@ Latency and cost per call will be measured in the smoke test. Known so far: esti
 ## B6. Sandbox suite length vs the 10-minute `make verify` budget (Phase 2, not blocking yet)
 
 The sandbox suite took 402 s on the 2-core VPS (the 200-bid test alone ~140 s). `make verify` must finish in under 10 minutes and will also build the oracle and read testnet. A cold build adds several minutes on a fresh machine. Option for Phase 6: run sandbox tests in parallel (separate sandboxes per test are already isolated), or let `make verify` reuse prebuilt wasm. To decide in Phase 6.
+
+## B7. Reproducible oracle hash for `make verify` (Phase 6, not blocking yet)
+
+`make verify` must check that the pinned version (`f55f2700...`) equals the hash of `oracle/` built from this commit. The current wasm was built with plain `cargo build` on the VPS (rustc 1.98.1). A judge's machine with another rustc may produce different bytes. Options: pin the toolchain with `rust-toolchain.toml` and rebuild/redeploy, or use OutLayer's reproducible Docker build (`scripts/build_github_wasm.sh`, docs/CLI.md) and redeploy that version. To decide in Phase 6; markets keep the version pinned at creation, so a new version needs new markets.

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 WASM_DIR := target/wasm
 CONTRACTS := fusd mock-outlayer flatrate
 
-.PHONY: build test test-shared test-unit test-sandbox verify clean-wasm
+.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm verify clean-wasm
 
 ## Build all contract wasm files into target/wasm with cargo-near.
 build:
@@ -24,12 +24,21 @@ test-unit:
 	cargo test -p fusd --lib
 	cargo test -p flatrate --lib
 
+## Oracle parsing and median against fixtures/prices (native, no network).
+test-oracle:
+	cd oracle && cargo test
+
+## Oracle component for OutLayer (wasm32-wasip2).
+oracle-wasm:
+	cd oracle && cargo build --target wasm32-wasip2 --release
+	@sha256sum oracle/target/wasm32-wasip2/release/flatrate-oracle.wasm
+
 ## near-workspaces sandbox tests (needs `make build` first).
 test-sandbox: build
 	cargo test -p flatrate --test sandbox -- --test-threads=1 --nocapture
 
 ## Everything that runs locally without network writes or keys.
-test: test-shared test-unit test-sandbox
+test: test-shared test-unit test-oracle test-sandbox
 
 clean-wasm:
 	rm -rf $(WASM_DIR)

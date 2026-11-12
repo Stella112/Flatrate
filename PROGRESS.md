@@ -161,3 +161,47 @@ test auction_200_bids_clear_within_gas ... ok
 ### Acceptance
 - All auction tests pass: PASS
 - Gas used by the 200-bid clear recorded: PASS (35.77 TGas)
+
+## Phase 3: real prices through OutLayer (2026-11-12)
+
+### Oracle component
+- `oracle/` (Rust, `wasm32-wasip2`): fetches akash, vast, runpod, shadeform, verda (rules in FACTS.md section 4), median with `flatrate_shared::median` (the function the contract checks with), returns `request_id` from `NEAR_REQUEST_ID`. A `fixture_responses` input field replays recorded bodies with no HTTP (tests only; the contract never sends it).
+- Native tests against `fixtures/prices/`: `cd oracle && cargo test` -> `test result: ok. 5 passed`.
+- OutLayer local runner (`wasi-test`, near-outlayer 2d50bfa) on the VPS:
+```
+live:     Execution successful! Fuel consumed: 50658175 instructions
+          {"index":"H100_HOURLY","price_micros":3980000,"sources":[akash 2560000, vast 2267222, runpod 3990000, shadeform 3980000, verda 5138000],...}
+fixtures: Execution successful! Fuel consumed: 69902848 instructions
+          {"index":"H100_HOURLY","price_micros":3980000,...,"fixture":true}
+```
+- Uploaded and deployed as project `flatrate-maris.testnet/flatrate-oracle`, version `f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa` (FACTS.md 9.2). Smoke run on testnet: tx [4zoELfFt](https://testnet.nearblocks.io/txns/4zoELfFtWriQPepF2jcc8q1abfWtHWpVjDjXQNn7ccmt), 12 s, ~0.002 NEAR, 5/5 sources, OutLayer request 31496.
+
+### Deploy
+`fusd.flatrate-maris.testnet` and `flatrate.flatrate-maris.testnet` deployed, oracle version pinned in `get_config` and in every market (FACTS.md 9.1). Markets: 0 (demo, interrupted), 1 (weekly, 16-23 Nov), 2 (demo, completed).
+
+### Keeper
+`scripts/keeper.mjs`: for each Open market inside its period, reads OutLayer's `estimate_execution_cost` and calls `request_observation` with that deposit (+0.001 NEAR, refunded by OutLayer). No npm dependencies. `scripts/demo-market-testnet.sh` runs one market from reveal to redemption and logs every tx.
+
+### Market 0 (interrupted)
+The PC slept from 13:39 to 19:21 UTC, so the reveal window and the period passed with the script paused. What ran is still a real record of two paths: unrevealed bids cleared and refunded ([EBRPG4uR](https://testnet.nearblocks.io/txns/EBRPG4uRDbFk62MUHN7JrrnHi6oc1Dp4PjuvEY6BSabQ), revealed 0, matched 0), void settlement with 0 observations ([3ibECLWe](https://testnet.nearblocks.io/txns/3ibECLWeZ7G4JT7MJ9ZFkTUAV5qyL1Xio13Fz1V8BmRL)), full escrow back by `withdraw_refund` 11 fUSD ([A4QFJEnF](https://testnet.nearblocks.io/txns/A4QFJEnFNwrtBaMk3AzHMT2XP3RtBR9yFDzy8N19DR5f)). The script now retries sends after network errors; the keeper retries RPC reads.
+
+### Market 2 (completed, 19:23 to 19:48 UTC)
+| Step | Tx | Result |
+|---|---|---|
+| create (commit 4 min, reveal 4 min, period 16 min, min 3 obs) | [8pWiDZhu](https://testnet.nearblocks.io/txns/8pWiDZhuzr5YWBDUFCuHhQebVZJywF4aShDzay2pL3S3) | market 2 |
+| commit Long 10 @ 55c, escrow 6 fUSD | [FtGfietX](https://testnet.nearblocks.io/txns/FtGfietXW3iEQEWd1nqt24YSrL3KcJ3h4unuaBzvaP5c) | hash only |
+| commit Short 10 @ 50c, escrow 5 fUSD | [6EebToNW](https://testnet.nearblocks.io/txns/6EebToNWF8k886Ggd7WnDLcTeKMDYtBirxfqoRyJZwuW) | hash only |
+| reveal Long | [CFBVocs3](https://testnet.nearblocks.io/txns/CFBVocs334kHjBYt5FCANjttTeYToxa5beZniovAmBUq) | bid_revealed |
+| reveal Short | [C5RBz9Br](https://testnet.nearblocks.io/txns/C5RBz9Brjd1CQriS1WedrgrQW3MaQE4YNN8SiM7RpyUQ) | bid_revealed |
+| clear_auction | [36ay9uLT](https://testnet.nearblocks.io/txns/36ay9uLTur5W25J1yuDngkVDE73Wf9xQTXKxb1vpJVry) | price 50c, 10 pairs |
+| observation 1 | [J5eEofdJ](https://testnet.nearblocks.io/txns/J5eEofdJEPKpk1BMe5zy8Rj6rbV8mR5PhhoNUrVFAshk) | 3980000, 5 sources, OutLayer request 33589 |
+| observation 2 | [3Wed41tV](https://testnet.nearblocks.io/txns/3Wed41tV6aTaJxWHpHUfjgsWYdTyGikrn6sxfsx7kSZd) | 3980000, 5 sources, request 33605 |
+| observation 3 | [4zsSXYWo](https://testnet.nearblocks.io/txns/4zsSXYWoaxW37xZoiTj2QUv5kZV1khHt9s4AEr7494wb) | 3980000, 5 sources, request 33621 |
+| settle | [DrfwCuCv](https://testnet.nearblocks.io/txns/DrfwCuCv7UV3mmkokj1pn8NHf7hHjYnj2UtJA878iZjF) | avg 3980000, long 493750, short 506250 |
+| redeem (10 Long + 10 Short) | [457EHofV](https://testnet.nearblocks.io/txns/457EHofVsV1WBohX2a4GZnd9zN8VcYey3KbKX8wxTF4P) | 10 fUSD |
+| withdraw_refund | [fhB4bGVE](https://testnet.nearblocks.io/txns/fhB4bGVEKgrq29YyvQ171oXErb7hV2ofzfF7kftehVg) | 1 fUSD (escrow 11 - paid 10) |
+
+A fourth observation was skipped: the keeper's RPC read failed once ("fetch failed") at 19:43; three met the minimum. Long payout check: (3.98 - 2.40) / 3.20 = 0.49375 (same as `payoff_rounds_long_down`).
+
+### Acceptance
+- Testnet hashes for 3 observations, the settlement and a redemption in PROGRESS.md and CLAIMS.md: PASS

@@ -151,3 +151,35 @@ Skipped: no `AURORA_INTENTS_API_KEY` supplied.
 | near-sandbox platforms | only linux-x86_64, linux-aarch64, darwin-arm64. **No Windows.** On this Windows machine sandbox tests run in WSL2 Debian 13.5 (Rust 1.99.1, cargo-near 0.23.0 installed there) | `near-sandbox-0.4.0/src/runner/mod.rs:87-104,163-164` |
 | near-workspaces API used | `near_workspaces::sandbox().await`, `worker.root_account()`, `account.create_subaccount(name).initial_balance(..).transact()`, `account.deploy(&wasm)`, `account.call(id, fn).args_json().deposit().gas().transact()`, `contract.view(fn).args_json().await?.json()`, `worker.fast_forward(blocks)`, `worker.view_block().await?.timestamp()`, `ExecutionFinalResult::{is_success, failures, logs, total_gas_burnt}` | `near-workspaces-0.24.0/src/worker/mod.rs:52`, `worker/impls.rs:104,305,350`, `types/account.rs:77-176`, `types/block.rs:32`, `result.rs:99-320` |
 | cargo-near output | `cargo near build non-reproducible-wasm --manifest-path <crate>/Cargo.toml --out-dir target/wasm` writes `target/wasm/<crate_name>.wasm` (`fusd.wasm`, `mock_outlayer.wasm`, `flatrate.wasm`) | `cargo near build ... --help`; build output |
+
+## 9. Testnet deployment and OutLayer runs (Phase 3, 2026-11-12)
+
+### 9.1 Accounts
+| Account | Role | Evidence |
+|---|---|---|
+| `flatrate-maris.testnet` | root / owner, created by Maris via `near account create-account sponsor-by-faucet-service` | `near account view-account-summary flatrate-maris.testnet network-config testnet now` -> 10 NEAR, 1 full access key, no contract |
+| `fusd.flatrate-maris.testnet` | fUSD (test stablecoin) | create tx `8Zr6bdYJyePE9fcVnp93PDRARWxEhUSRTQuZVddY3pb6`, deploy+init tx `6zxqztYZWe83dUi2HgFTrmtRcQhMDnQDQXuZk2t54uKD`; `ft_metadata` -> `symbol "fUSD"`, `decimals 6` |
+| `flatrate.flatrate-maris.testnet` | Flatrate contract | create tx `Dbgxy4wf9DqLvALSgdJHLPFBT7k6fuqfJpZBz7mTgTwp`, deploy+init tx `FSJyTbqSBhCnTqzYum66gcLyrk9xtjPoum6DfpaKL6Mb`; fUSD storage registration tx `ChmWc5qEd33bbv29wqGqVssQbiEWhw8q77Fu8yBCPzGa` |
+
+Deployed wasm sha256: `flatrate.wasm` `a7fbb3c7bd0d098d894f3575b875894ede32732b86330568e2c3495da14b0bb3` (305048 bytes), `fusd.wasm` `53ee615fd7088c459f049c037119d57aaff23ba43df1c96e7ccfd6a7971a7dba`, both built on the VPS by the Phase 2 `make test` run that passed.
+
+`get_config` on `flatrate.flatrate-maris.testnet`: owner `flatrate-maris.testnet`, fusd `fusd.flatrate-maris.testnet`, outlayer `outlayer.testnet`, oracle project `flatrate-maris.testnet/flatrate-oracle`, version key `f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa`, sources akash, vast, runpod, shadeform, verda, resource limits 1e9 instructions / 128 MB / 30 s.
+
+### 9.2 Oracle project
+- Built on the VPS: `cargo build --target wasm32-wasip2 --release` in `oracle/` -> `flatrate-oracle.wasm` 464577 bytes, sha256 `f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa`. Crates: `wasi-http-client = "0.2"`, `serde`, `serde_json`, `flatrate-shared` (path). The `outlayer` SDK crate is not used.
+- OutLayer CLI `outlayer-v0.2.3-x86_64-pc-windows-msvc.zip` from `https://github.com/out-layer/outlayer-cli/releases/tag/v0.2.3`. Login done by Maris (`outlayer login testnet`).
+- `outlayer upload` -> tx `BbWZdK7zE2bxG1BCDTohDC6QwuUMJdSYicig6fkPzoCM`, URL `https://test.fastfs.io/flatrate-maris.testnet/outlayer.testnet/f55f27004faa014bb08665f5cf55fab21418c7c2004d1e17fc8758580a8694fa.wasm` (downloaded bytes hash to the same sha256).
+- `outlayer deploy flatrate-oracle <url>` -> project `flatrate-maris.testnet/flatrate-oracle`. `get_version` -> `wasm_hash f55f2700...`, `is_active true`, source `WasmUrl` build_target `wasm32-wasip2`.
+
+### 9.3 OutLayer testnet run (Phase 0 step 5 smoke test)
+- `outlayer run flatrate-maris.testnet/flatrate-oracle '{"index":"H100_HOURLY","sources":[...5]}'` (on-chain): tx `4zoELfFtWriQPepF2jcc8q1abfWtHWpVjDjXQNn7ccmt`, CLI quote "~0.0020 NEAR", 12 s wall time from send to result. Output saved to `fixtures/oracle/outlayer-testnet-run.json`: median `3980000`, 5/5 sources, `request_id "31496"`.
+- So: OutLayer workers can reach all five price APIs (B5 risk resolved); `NEAR_REQUEST_ID` is set; the result is the module's JSON with no `{success,result,error}` wrapper (B5 question resolved in favour of the repo source).
+- Local runner (`wasi-test`, near-outlayer `2d50bfa`): live run 50,658,175 instructions, 2.0 s; fixture run (`--input-file`, all five `fixtures/prices/*.json`) 69,902,848 instructions, median `3980000`.
+- Live prices today differ from the Phase 0 fixtures for vast (2.267 vs 3.976) and verda (5.138 vs 5.087); the median is unchanged.
+
+### 9.4 Markets created
+| id | Purpose | Times (UTC) | min obs | tx |
+|---|---|---|---|---|
+| 0 | demo | commit until +10 min, reveal +10 min, period 30 min, void 60 min after | 3 | `9FE5ZNdoNLe6kshLiSyrK8wVjNfnJKEFY9mzrCG9mdEk` |
+| 1 | weekly | commit until 2026-11-14 12:00, reveal until 2026-11-15 12:00, period 2026-11-16 00:00 to 2026-11-23 00:00, void 2026-11-25 00:00 | 7 | `6bUXwvzCCJCLKWfTMKq3BWnHmp24DF2EuDDjFmPzgKvK` |
+Both: floor `2_400_000`, cap `5_600_000` (section 5).
