@@ -1,0 +1,19 @@
+[package]
+name = "flatrate"
+version = "0.1.0"
+edition = "2021"
+description = "Flatrate: GPU price claims settled on an OutLayer-attested median"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+flatrate-shared = { path = "../../shared" }
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }
+near-workspaces = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

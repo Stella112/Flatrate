@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["shared", "contracts/fusd", "contracts/flatrate", "contracts/mock-outlayer"]
+
+[workspace.dependencies]
+near-sdk = "5.30.1"
+near-contract-standards = "5.30.1"
+near-workspaces = "0.24.0"
+borsh = { version = "1.8.1", features = ["derive"] }
+proptest = "1.12.0"
+tokio = { version = "1.54.1", features = ["full"] }
+serde_json = "1"
+anyhow = "1"
+sha2 = "0.11.1"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

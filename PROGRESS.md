@@ -70,3 +70,55 @@ floor 2.40 (`2_400_000`), cap 5.60 (`5_600_000`) from median 3.98.
 
 ### Decisions after the Phase 0 report
 - B1 resolved (2026-11-12): `on_observation` is guarded by "caller is this contract" plus "pending id exists", with the replay check ordered first so attack buttons show distinct errors. The spec's "predecessor is the OutLayer contract" is not possible with OutLayer's promise-return flow (FACTS.md 3.3). Details in BLOCKERS.md B1.
+
+## Phase 1: contracts core (2026-11-12)
+
+Built and tested on a Linux VPS (Ubuntu 24.04.4, x86_64, rustc 1.98.1, cargo-near 0.23.0 from the official `cargo-near-v0.23.0` installer), because near-sandbox has no Windows build. The repo was copied there with `tar` (no `target/`, `vendor/`, `.git`).
+
+```
+$ CARGO_BUILD_JOBS=2 make test
+-- test-shared (cargo test -p flatrate-shared)
+test tests::payoff_at_floor_cap_mid ... ok
+test tests::payoff_below_floor_and_above_cap ... ok
+test tests::payoff_rejects_bad_bounds - should panic ... ok
+test tests::payoff_rounds_long_down ... ok
+test tests::void_payoff_is_half ... ok
+test tests::prop_long_plus_short_is_one_dollar ... ok
+test tests::prop_payoff_monotonic ... ok
+test tests::prop_redeem_never_exceeds_collateral ... ok
+test tests::prop_clearing_never_mints_more_than_escrow_covers ... ok
+test tests::mean_and_median ... ok
+test tests::two_bid_match ... ok
+test tests::tie_break_prefers_50_then_lower ... ok
+test tests::partial_fill_by_limit_then_commit_order ... ok
+test tests::two_hundred_bids ... ok
+(+ 4 more)
+test result: ok. 18 passed; 0 failed
+-- test-unit
+fusd:     test result: ok. 3 passed; 0 failed
+flatrate: test result: ok. 0 passed; 0 failed   (contract logic is covered by sandbox tests)
+-- build (cargo near build non-reproducible-wasm)
+target/wasm/flatrate.wasm       248724 bytes  sha256 4132a6e1ee150e9c8c3d93b740a91a904cbc076982c8c4c6350e00adc5cf42ac
+target/wasm/fusd.wasm           149093 bytes  sha256 53ee615fd7088c459f049c037119d57aaff23ba43df1c96e7ccfd6a7971a7dba
+target/wasm/mock_outlayer.wasm  117673 bytes  sha256 318763c26c8699729bca076a159ad8fca2a2033a8d2693b7d30b3e6fa641f01b
+-- test-sandbox (near-workspaces)
+test create_market_is_owner_only ... ok
+test ledger_mint_transfer_redeem_pair ... ok
+test mint_refused_while_in_auction_and_refunded ... ok
+test observe_settle_redeem_and_double_redeem ... ok
+test oracle_failed_run_and_refused_call_record_nothing ... ok
+test oracle_fewer_than_3_sources_rejected ... ok
+test oracle_non_outlayer_caller_rejected ... ok
+test oracle_out_of_range_price_rejected ... ok
+test oracle_unknown_request_id_rejected ... ok
+test request_observation_outside_period_rejected ... ok
+test settle_too_early_refused ... ok
+test too_few_observations_waits_then_voids_then_second_settle_refused ... ok
+test result: ok. 12 passed; 0 failed; finished in 154.13s
+exit=0
+```
+
+### Acceptance
+- `make test` passes: PASS
+- `cargo near build` succeeds for fusd and flatrate (and mock-outlayer): PASS
+- Test output pasted here: PASS

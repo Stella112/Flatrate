@@ -1,0 +1,10 @@
+[package]
+name = "flatrate-shared"
+version = "0.1.0"
+edition = "2021"
+description = "Pure payoff, median and auction-clearing math for Flatrate"
+
+[dependencies]
+
+[dev-dependencies]
+proptest = { workspace = true }

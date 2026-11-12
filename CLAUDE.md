@@ -41,7 +41,7 @@ flatrate/
 Status block (Claude Code updates only this block in CLAUDE.md, at the end of each phase):
 
 ```
-STATUS: phase=0 state=report-sent last_commit=see-git-log blockers=see-BLOCKERS.md
+STATUS: phase=1 state=report-sent last_commit=see-git-log blockers=see-BLOCKERS.md
 ```
 
 ## Your role and mandate

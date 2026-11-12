@@ -1,0 +1,11 @@
+[package]
+name = "mock-outlayer"
+version = "0.1.0"
+edition = "2021"
+description = "SANDBOX TESTS ONLY. Stand-in for outlayer.testnet. Never deployed to testnet."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }

@@ -134,3 +134,20 @@ Median of the five today: **3.98 USD/GPU-hr** (sorted: 2.56, 3.976, 3.98, 3.99, 
 ## 7. Aurora Intents (step 8)
 
 Skipped: no `AURORA_INTENTS_API_KEY` supplied.
+
+## 8. Rust crates and sandbox (Phase 1)
+
+| Fact | Value | Source |
+|---|---|---|
+| near-sdk | 5.30.1 (rust-version 1.95) | `cargo search near-sdk`; `near-sdk-5.30.1/Cargo.toml:14` |
+| near-contract-standards | 5.30.1 | `cargo search near-contract-standards` |
+| near-workspaces | 0.24.0 (rust-version 1.95) | `cargo search near-workspaces`; crate `Cargo.toml:14` |
+| proptest | 1.12.0 | `cargo search proptest` |
+| tokio | 1.54.1 | `cargo search tokio` |
+| FT impl pattern | contract delegates `FungibleTokenCore`, `FungibleTokenResolver`, `StorageManagement` to a `FungibleToken` field; `FungibleToken::new(prefix)`, `internal_register_account`, `internal_deposit`, `FtMint{owner_id, amount, memo}.emit()` | `near-contract-standards-5.30.1/src/fungible_token/core.rs:1-75`, `core_impl.rs:40-121`, `events.rs:25-30` |
+| `ft_on_transfer(sender_id, amount: U128, msg: String) -> PromiseOrValue<U128>` | returns unused amount | `near-contract-standards-5.30.1/src/fungible_token/receiver.rs:24-29` |
+| Reading a promise result | `env::promise_result` is deprecated; use `env::promise_result_checked(idx, max_len) -> Result<Vec<u8>, PromiseError>`; `PromiseError` has `Failed`, `TooLong(usize)` and is non-exhaustive | `near-sdk-5.30.1/src/environment/env.rs:2264-2303`, `src/types/vm_types.rs:51-59`, compiler error E0004 |
+| `store::LookupMap` key needs `Ord` | compiler error E0277 on a non-`Ord` key | `cargo near build` output |
+| near-sandbox platforms | only linux-x86_64, linux-aarch64, darwin-arm64. **No Windows.** On this Windows machine sandbox tests run in WSL2 Debian 13.5 (Rust 1.99.1, cargo-near 0.23.0 installed there) | `near-sandbox-0.4.0/src/runner/mod.rs:87-104,163-164` |
+| near-workspaces API used | `near_workspaces::sandbox().await`, `worker.root_account()`, `account.create_subaccount(name).initial_balance(..).transact()`, `account.deploy(&wasm)`, `account.call(id, fn).args_json().deposit().gas().transact()`, `contract.view(fn).args_json().await?.json()`, `worker.fast_forward(blocks)`, `worker.view_block().await?.timestamp()`, `ExecutionFinalResult::{is_success, failures, logs, total_gas_burnt}` | `near-workspaces-0.24.0/src/worker/mod.rs:52`, `worker/impls.rs:104,305,350`, `types/account.rs:77-176`, `types/block.rs:32`, `result.rs:99-320` |
+| cargo-near output | `cargo near build non-reproducible-wasm --manifest-path <crate>/Cargo.toml --out-dir target/wasm` writes `target/wasm/<crate_name>.wasm` (`fusd.wasm`, `mock_outlayer.wasm`, `flatrate.wasm`) | `cargo near build ... --help`; build output |
