@@ -1,0 +1,15 @@
+{
+  "name": "flatrate-chainsig",
+  "private": true,
+  "type": "module",
+  "description": "Chain-signature demo: a NEAR account signs a Base Sepolia transfer through NEAR's MPC signer",
+  "dependencies": {
+    "@near-js/accounts": "2.5.1",
+    "@near-js/crypto": "2.5.1",
+    "@near-js/keystores": "2.5.1",
+    "@near-js/providers": "2.5.1",
+    "@near-js/signers": "2.5.1",
+    "chainsig.js": "1.1.16",
+    "viem": "2.57.19"
+  }
+}

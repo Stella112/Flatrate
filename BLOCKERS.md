@@ -105,3 +105,8 @@ Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run 
 - **Extra 3, enclave-cleared auction.** Needs new contract logic (accept a clearing result from an OutLayer component, with bids encrypted to it) plus a new OutLayer component and key handling. The H100 contract is keyless and cannot change; a third contract with this logic is a new design that cannot be built and tested before the 14 November deadline. Not started.
 - **Extra 4, secondary trading on Rhea.** Rhea pools trade NEP-141 tokens. Flatrate claims are balances inside the contract, not NEP-141 tokens, and the keyless contract cannot add a token interface. A wrapper token would need a deposit notification that `claim_transfer` does not send. `ref-finance-101.testnet` is live (Phase 0), but there is nothing Flatrate can list on it. Not started.
 - **Extra 5, mainnet pay-in and payout.** Spends real money; CLAUDE.md allows it only after Maris writes `approve mainnet payment`, and it needs a funded mainnet wallet. Not started.
+
+## B13: cross-chain pay-in and payout reduced to a chain-signature demo (2026-11-13)
+- The description's extra "cross-chain pay-in and payout on test networks" would move test dollars between Base Sepolia and NEAR. That needs a relayer that watches one chain and credits the other: a bridge we write ourselves (CLAUDE.md "Out of scope") with an operator (against "no operator"). Maris chose the reduced version.
+- Built instead: `scripts/chainsig/sepolia.mjs`. A NEAR testnet account controls a Base Sepolia address through NEAR's MPC signer `v1.signer-prod.testnet` and signs a real Base Sepolia transfer from it. No fUSD or claim crosses chains.
+- Funding the Base Sepolia address needs a faucet with a captcha or login, so Maris funds it once.
