@@ -2,7 +2,7 @@ import { href, useApp } from "../App";
 import { EXPLORER_ACCOUNT, FLATRATE_ID, INDEX, OUTLAYER_ID } from "../config";
 import { getConfig, getMarkets } from "../data";
 import { demoOracle } from "../demo";
-import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTx, type AttestationCheck, type ObservationTx } from "../proof";
+import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTxs, type AttestationCheck, type ObservationTx } from "../proof";
 import { near, usd, utc } from "../format";
 import type { OracleOutput } from "../types";
 import { Card, TxLink, useAsync } from "../ui";
@@ -21,7 +21,7 @@ export function ProofPage() {
         return m;
       }
       const list = await listObservationTxs();
-      const read = await Promise.all(list.map((t) => readObservationTx(t.hash, t.signer).catch(() => null)));
+      const read = await readObservationTxs(list);
       for (const r of read) if (r?.pendingId) m.set(r.pendingId, r);
       return m;
     },

@@ -107,12 +107,19 @@ export function parseOutcome(r: any): TxResult {
 
 /** Full receipt tree of a past transaction (archival node). */
 export async function txStatus(hash: string, sender: string): Promise<TxResult> {
-  const r = await rpc(ARCHIVAL_RPC_URL, "EXPERIMENTAL_tx_status", {
-    tx_hash: hash,
-    sender_account_id: sender,
-    wait_until: "FINAL",
-  });
-  return parseOutcome(r);
+  const params = { tx_hash: hash, sender_account_id: sender, wait_until: "FINAL" };
+  // The archival node rate-limits bursts (its 429 carries no CORS header, so the browser sees a network
+  // error). Retry with backoff, then try the regular node, which still holds recent transactions.
+  let last: unknown;
+  for (const [url, wait] of [[ARCHIVAL_RPC_URL, 0], [ARCHIVAL_RPC_URL, 1500], [RPC_URL, 0], [ARCHIVAL_RPC_URL, 4000], [ARCHIVAL_RPC_URL, 8000]] as const) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return parseOutcome(await rpc(url, "EXPERIMENTAL_tx_status", params));
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
 }
 
 // ---------- guest account ----------

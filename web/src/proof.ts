@@ -39,6 +39,20 @@ export async function listObservationTxs(maxPages = 5): Promise<{ hash: string; 
   return out;
 }
 
+/** Reads many observation transactions, a few at a time so the RPC node does not rate-limit the page. */
+export async function readObservationTxs(list: { hash: string; signer: string }[], concurrency = 2): Promise<(ObservationTx | null)[]> {
+  const out: (ObservationTx | null)[] = new Array(list.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const i = next++;
+      out[i] = await readObservationTx(list[i].hash, list[i].signer).catch(() => null);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));
+  return out;
+}
+
 export async function readObservationTx(hash: string, signer: string): Promise<ObservationTx> {
   const r = await txStatus(hash, signer);
   const req = r.events.find((e) => e.event === "observation_requested");
