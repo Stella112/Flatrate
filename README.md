@@ -2,6 +2,8 @@
 
 Flatrate lets AI teams and agents lock next week's GPU price on NEAR testnet. A buyer of compute takes a **Long** claim, which pays more when the H100 price per GPU-hour rises. A seller of compute takes the **Short** claim, which pays more when it falls. One fUSD of collateral backs one Long plus one Short. Settlement uses the median of five public GPU price APIs, fetched inside OutLayer and posted on-chain one price per time slot, so no operator sets the price. Testnet only; fUSD is a test token.
 
+A second deployment of the same contract (extra 2) runs markets on an LLM token price instead: Llama 3.3 70B output tokens, USD per 1M, the median across seven OpenRouter providers. The site switches between the two with the "H100 GPU-hour" / "LLM tokens" buttons.
+
 Other submission by the same builder: **Facedown**, https://github.com/Stella112/facedown
 
 ## Try it
@@ -45,6 +47,9 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 | Guest sponsor | `flatrate-sponsor.testnet` (key only in the hosting provider) |
 | Fully settled DEMO market | market 11: every transaction in [PROGRESS.md](PROGRESS.md) ("Build prompt v2") and [CLAIMS.md](CLAIMS.md) |
 | Live WEEKLY market | market 10: commits until 2026-11-14 11:32 UTC, reveals until 23:32 UTC, then 28 six-hour slots until 2026-11-21 23:32 UTC |
+| Token-price contract (extra 2) | `tokens.flatrate-maris.testnet`: the same contract with `index: TOKEN_PRICE`, oracle project `flatrate-maris.testnet/flatrate-oracle-tokens`, pinned version `b7d4679204d59903d538196ff90e7f66f59962b680ee4961b23a43ace46548b3` (reproducible build of `oracle-tokens/`); full-access key still present (not keyless) |
+| Token-price keeper | `keeper.flatrate-maris.testnet` (function-call key only: `clear_auction`, `request_observation`, `settle`, `roll_market` on the token contract) |
+| Contract builds | `flatrate.flatrate-maris.testnet` runs the build of commit `e2420a4` (wasm sha256 `1965f276…`; keyless, so it cannot pick up later changes). `tokens.flatrate-maris.testnet` runs the build of this branch's contract with the `index` init field (wasm sha256 `82c138c3…`). The only contract change after `e2420a4` is that field (default `H100_HOURLY`) and the Cover Note title using it |
 | Hedging agent (extra) | `agent.flatrate-maris.testnet`: a function-call key limited to the flatrate contract, plus a full-access key used only to commit bids; ran DEMO market 13 end to end |
 
 ## What NEAR does here (remove NEAR and it stops)
@@ -53,7 +58,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 - **Yield and resume.** `request_execution` returns a promise that resumes when OutLayer's worker answers; the callback gets the oracle's JSON.
 - **Keyless contract with public `roll_market`.** The contract account has no access keys, so nobody can upgrade it or act as it. Observing, clearing, settling and rolling are public calls; market 12 was rolled by a guest account after the keys were deleted.
 - **Function-call access keys.** The keeper's account holds only a key that may call `clear_auction`, `request_observation`, `settle` and `roll_market` on the flatrate contract. The hedging agent rolls, reveals, withdraws refunds and redeems with a key limited to the flatrate contract (allowance 0.25 NEAR).
-- **Implicit accounts in the browser.** Guests get an implicit account from a key made in the browser; every action on the site is a transaction signed by that key.
+- **Implicit accounts in the browser.** Guests get an implicit account from a key made in the browser; every action on the site is a transaction signed by that key. Visitors can instead sign in with a NEAR wallet (NEAR Wallet Selector: Meteor, MyNearWallet, Intear).
 - **NEAR Intents quotes.** The "Pay from any chain" page asks NEAR Intents 1Click (and the Aurora Intents API, when its key is configured) for a dry-run quote: what paying in USDC from an EVM chain would cost.
 
 ## Tracks
@@ -74,6 +79,7 @@ make test            # shared, contract unit, oracle and sandbox tests (several 
 make demo-scripted   # replay a recorded testnet market in the sandbox
 make test-agent      # hedging agent bid planning tests (node, no network)
 make agent-dry       # what the agent would bid on the latest markets (read-only, no keys)
+ORACLE_DIR=oracle-tokens bash scripts/oracle-reproducible.sh --twice   # same for the token-price oracle
 make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; prints the sha256
 ```
 
@@ -91,10 +97,12 @@ make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; 
 - **Sponsored guest accounts.** The sponsor pays 0.5 testnet NEAR per guest; its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
 - **Rhea.** `ref-finance-101.testnet` is live on testnet (2961 pools), but no Flatrate pool exists: the Rhea extra is not built.
 - **The agent's commit key is full-access.** A bid is committed through fUSD `ft_transfer_call`, which needs 1 yoctoNEAR attached, and NEAR function-call keys cannot attach a deposit (BLOCKERS.md B11). The agent therefore commits with a full-access key on its own account; its limit is the fUSD it holds and `max_spend_fusd` per bid. Every other agent call uses the flatrate-only key. The contract is keyless, so a deposit-free commit path cannot be added.
-- **Not built.** Encrypted auction, token price market (both need contract changes, ruled out by keyless), chain-signature pay-in, mainnet payments, wallet login.
+- **Token-price index has one upstream.** All seven prices come from one OpenRouter endpoint, so OpenRouter is a single point of trust for that index; the H100 index uses five separate APIs. The token contract still has its full-access key.
+- **Wallet login not yet used with a real wallet.** The site loads Meteor, MyNearWallet and Intear and starts their sign-in; no transaction has been signed through a wallet yet (the guest flow is the tested path).
+- **Not built.** Encrypted (enclave-cleared) auction, Rhea secondary trading, chain-signature pay-in, mainnet payments (BLOCKERS.md B12).
 
 ## Repository
 
-`contracts/flatrate` (markets, auction, claims, slots, settlement, rolling, Cover Notes), `contracts/fusd` (test stablecoin), `contracts/mock-outlayer` (sandbox only, never deployed), `shared/` (payoff, median, auction clearing), `oracle/` (OutLayer component), `web/` (site and `web/api` serverless functions), `scripts/` (keeper, hedging agent in `scripts/agent/`, verify, demo helpers), `fixtures/` (recorded API responses and a recorded market). Build log with real output: [PROGRESS.md](PROGRESS.md). Sources for every external fact: [FACTS.md](FACTS.md). Open items: [BLOCKERS.md](BLOCKERS.md). License: MIT ([LICENSE](LICENSE)).
+`contracts/flatrate` (markets, auction, claims, slots, settlement, rolling, Cover Notes), `contracts/fusd` (test stablecoin), `contracts/mock-outlayer` (sandbox only, never deployed), `shared/` (payoff, median, auction clearing), `oracle/` (OutLayer component, H100), `oracle-tokens/` (OutLayer component, LLM tokens), `web/` (site and `web/api` serverless functions), `scripts/` (keeper, hedging agent in `scripts/agent/`, verify, demo helpers), `fixtures/` (recorded API responses and a recorded market). Build log with real output: [PROGRESS.md](PROGRESS.md). Sources for every external fact: [FACTS.md](FACTS.md). Open items: [BLOCKERS.md](BLOCKERS.md). License: MIT ([LICENSE](LICENSE)).
 
 Built at the NEAR Hackathon.

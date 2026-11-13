@@ -376,3 +376,8 @@ button:disabled {
 .quote h3 {
   margin-top: 0;
 }
+
+/* index switch (extra 2: one contract per index) */
+.index-switch { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.index-switch a { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; font-size: 0.9em; }
+.index-switch a.active { background: var(--accent); color: var(--accent-text); border-color: transparent; }

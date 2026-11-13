@@ -1,5 +1,5 @@
 import { href, useApp } from "../App";
-import { EXPLORER_ACCOUNT, FLATRATE_ID, OUTLAYER_ID } from "../config";
+import { EXPLORER_ACCOUNT, FLATRATE_ID, INDEX, OUTLAYER_ID } from "../config";
 import { getConfig, getMarkets } from "../data";
 import { demoOracle } from "../demo";
 import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTx, type AttestationCheck, type ObservationTx } from "../proof";
@@ -56,7 +56,7 @@ export function ProofPage() {
             oracle project and the <strong>version pinned by wasm sha256</strong> when the market was created.
           </li>
           <li>
-            The oracle fetches five public GPU price APIs inside the OutLayer worker and returns every source's price and the median.
+            The oracle fetches {INDEX.sources} inside the OutLayer worker and returns every source's price and the median.
           </li>
           <li>
             The result comes back by yield and resume to <span className="mono">on_observation</span>, which only the contract's own
@@ -104,7 +104,7 @@ export function ProofPage() {
                     <th>Median</th>
                     <th>OutLayer request</th>
                     <th>Tx</th>
-                    <th>Per-source (USD/GPU-hr)</th>
+                    <th>Per-source ({INDEX.key === "h100" ? "USD/GPU-hr" : "USD/1M tokens"})</th>
                     <th>Fee</th>
                     <th>Attestation</th>
                   </tr>

@@ -80,10 +80,26 @@ else
   row "oracle wasm on fixtures (OutLayer runner)" SKIP "build wasi-test: make oracle-runner (OutLayer wasi-test-runner)"
 fi
 
+# 3b. token-price oracle (extra 2): parsing tests and reproducible build
+if step "token oracle parsing tests" "$LOG/oracle-tokens.log" bash -c 'cd oracle-tokens && cargo test'; then
+  row "[tokens] oracle parsing vs fixtures/tokens" PASS "$(grep -m1 'test result: ok. [1-9]' "$LOG/oracle-tokens.log")"
+else row "[tokens] oracle parsing vs fixtures/tokens" FAIL "see $LOG/oracle-tokens.log"; fi
+TOKENS_HASH=""
+if [ -n "$ORACLE_HASH" ]; then
+  echo "== token oracle reproducible build (docker)"
+  if ORACLE_DIR=oracle-tokens bash scripts/oracle-reproducible.sh > "$LOG/oracle-tokens-repro.log" 2>&1; then
+    TOKENS_HASH=$(grep -oE '[0-9a-f]{64}' "$LOG/oracle-tokens-repro.log" | tail -1)
+    row "[tokens] oracle reproducible build" PASS "sha256 $TOKENS_HASH"
+  else row "[tokens] oracle reproducible build" FAIL "see $LOG/oracle-tokens-repro.log"; fi
+fi
+
 # 4. chain
 echo "== testnet view calls"
 node scripts/verify-chain.mjs ${ORACLE_HASH:+--oracle-hash "$ORACLE_HASH"} > "$LOG/chain.log" 2>&1
 while IFS=$'\t' read -r c s e; do [ -n "$c" ] && row "$c" "$s" "$e"; done < "$LOG/chain.log"
+FLATRATE_ID=tokens.flatrate-maris.testnet ORACLE_DIR=oracle-tokens CHECK_PREFIX="[tokens] " \
+  node scripts/verify-chain.mjs ${TOKENS_HASH:+--oracle-hash "$TOKENS_HASH"} > "$LOG/chain-tokens.log" 2>&1
+while IFS=$'\t' read -r c s e; do [ -n "$c" ] && row "$c" "$s" "$e"; done < "$LOG/chain-tokens.log"
 
 # 5. table
 echo

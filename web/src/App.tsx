@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { EXPLORER_ACCOUNT, FLATRATE_ID, FUSD_ID, isScriptedDemo } from "./config";
+import { EXPLORER_ACCOUNT, FLATRATE_ID, FUSD_ID, INDEX, INDEXES, isScriptedDemo } from "./config";
 import { accountExists, call, forgetGuest, loadOrCreateGuest, nearBalance, sponsor, view, walletUser, type Guest } from "./near";
 import { listWallets, signIn, signOut, signedInWallet, type WalletChoice } from "./wallet";
 import { near, shortAcct, units } from "./format";
@@ -34,7 +34,22 @@ function useRoute(): string[] {
 }
 
 /** Keeps `?demo=scripted` on every link in demo mode. */
-export const href = (path: string) => `${isScriptedDemo() ? "?demo=scripted" : ""}#${path}`;
+export const href = (path: string) =>
+  `${isScriptedDemo() ? "?demo=scripted" : INDEX.key !== "h100" ? `?index=${INDEX.key}` : ""}#${path}`;
+
+/** Switches between the per-index contracts (a full page load: every view reads FLATRATE_ID). */
+function IndexSwitch() {
+  if (isScriptedDemo()) return null;
+  return (
+    <div className="index-switch" role="group" aria-label="Index">
+      {INDEXES.map((i) => (
+        <a key={i.key} href={i.key === "h100" ? "/#/" : `/?index=${i.key}#/`} className={i.key === INDEX.key ? "active" : ""}>
+          {i.name}
+        </a>
+      ))}
+    </div>
+  );
+}
 
 export function DemoBadge() {
   return (
@@ -306,6 +321,7 @@ export function App() {
         </a>
         <Nav route={route} />
       </header>
+      <IndexSwitch />
       <WalletPanel />
       {demo && <DemoStepper />}
       <main>{page}</main>

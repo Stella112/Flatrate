@@ -434,3 +434,32 @@ DEMO market 13, run by the agent with `AGENT_TEMPLATES=DEMO AGENT_ROLL=DEMO`, `h
 | redeem | agent, function-call key | [5GP7jvPw](https://testnet.nearblocks.io/txns/5GP7jvPw5Tb5K3cBS4duiYAf5AtPyPD7EwUWhbeNuaGW) | 40 x 0.525 = 21.00 fUSD |
 
 Agent fUSD: 100 -> 99.40 (paid 21.60 for the hedge, received 21.00; the price did not move, so the hedge cost its premium).
+
+
+## Extra 6: wallet login (2026-11-13, "build all extras")
+NEAR Wallet Selector 10.1.4 with Meteor, MyNearWallet and Intear (`web/src/wallet.ts`), loaded only when "Sign in with a NEAR wallet" is clicked. One signing path: `call()` in `web/src/near.ts` sends through the wallet when one is signed in, else through the guest key. Our own wallet list instead of `modal-ui` (it bundles React 18). Meteor's SDK needs Node's `Buffer`, `global` and `process` in the browser: provided before the modules load (`buffer` 6.0.3, Vite alias).
+
+Local check: the list loads all three wallets; clicking MyNearWallet opens `testnet.mynearwallet.com` (the in-app browser blocks popups from automation, so the sign-in itself needs a person). No wallet-signed transaction yet.
+
+## Extra 2: token-price market (2026-11-13)
+- Contract: `index: Option<IndexId>` init field (default `H100_HOURLY`), new `TOKEN_PRICE` variant, Cover Note title from the index. The H100 contract is keyless and keeps running the `e2420a4` build. Unit test `index_names_and_labels`; sandbox `index_is_fixed_at_init_and_defaults_to_h100` (VPS: `3 passed` with `note_wrap_*` and `reset_*`).
+- Oracle: new crate `oracle-tokens/` (so `oracle/` and its pinned hash stay unchanged: reproducible build still `6c252d52…`). `cargo test`: 3 passed. Reproducible build: `b7d4679204d59903d538196ff90e7f66f59962b680ee4961b23a43ace46548b3` (twice). Live OutLayer run [AV8piDb1](https://testnet.nearblocks.io/txns/AV8piDb1LvfK8SEUJHDYtdzitmdGND8JfS6NuK1wso6u): 7/7 providers, median 710000.
+- Funding: two faucet accounts deleted into the root ([7PP14zn6](https://testnet.nearblocks.io/txns/7PP14zn6RYGi7aoATpT3gyfnmqataEghX27bbqdnq5wX), [2dqREGPJ](https://testnet.nearblocks.io/txns/2dqREGPJK7xTu3EgsAuSekcWMS2378CC5LWR3wkTrPQX)), root 0.41 -> 20.41 NEAR.
+- Deploy (`scripts/deploy-tokens.sh`): account [H3EwLye5](https://testnet.nearblocks.io/txns/H3EwLye5g7RHUaNNrbqEf6m16r3usPou1BS2ZLY6hq8E), deploy + `new` [4WcQnvKX](https://testnet.nearblocks.io/txns/4WcQnvKXapf4KKLbEy2gk3zEyjjrGcUoRy57hv4ebrLr), fUSD storage [CLATSBr3](https://testnet.nearblocks.io/txns/CLATSBr3ErrNL5vnTbXa3HxKbF9mzAe6WGZPfVXBHYHa). Markets: DEMO 10 [7aSr1iRD](https://testnet.nearblocks.io/txns/7aSr1iRDkTPLMRynivnbJzBMd9YmMNqVHdJt6YnZhDU2), WEEKLY 11 [EmacMX2C](https://testnet.nearblocks.io/txns/EmacMX2CD9ViF4CKoY51RJsEDHSZm5WzqHRwc7G7LqmK), band 0.40 / 0.90 (0.71 x0.6 / x1.4, rounded down to 10 cents).
+- Keeper: `keeper.flatrate-maris.testnet` ([DYanSTK8](https://testnet.nearblocks.io/txns/DYanSTK8q5yR2iMVjUoEbT2hvqMm2mgnxgX8K1eRbc5F)), function-call key for the token contract ([BggAbsmj](https://testnet.nearblocks.io/txns/BggAbsmjLaegRYuiNVPAJ91fbenBnRTtszEX8Gf9mZbt)), full-access key deleted ([9YRDSYZP](https://testnet.nearblocks.io/txns/9YRDSYZPUjkYsGHAxiGnmAKVt7xGNT8KUjAr5BPhZHkX)); VPS cron line with `FLATRATE_ID=tokens.flatrate-maris.testnet`.
+
+Token DEMO market 10:
+
+| Step | Tx | Result |
+|---|---|---|
+| commit root Long 20 @ <= 65c / holder Short 20 @ <= 40c | [866y9ZXb](https://testnet.nearblocks.io/txns/866y9ZXbAZGzpzuJZUFmnrfL9xbrGAkrTrFLsYzXFVk2), [fRRTkWKS](https://testnet.nearblocks.io/txns/fRRTkWKS1o5U88n3JxE9JY4QpLTFQWVdWr91gH8YVb8) | 15 fUSD escrow each |
+| reveal | [AcDTAFZm](https://testnet.nearblocks.io/txns/AcDTAFZm5qA6BCJdhAEoppCh6aAVAEvjXBcti6emRLfg), [D1q2joF7](https://testnet.nearblocks.io/txns/D1q2joF7kyxBFrjGH3qRxo8cCniJvwCCjwGqyQFdRWKa) | |
+| clear_auction | [CybVjMeu](https://testnet.nearblocks.io/txns/CybVjMeuhm4k4ChVnn79UEBX2EGzffpQfKzNftbAzfzQ) | opened at 60c, 20 pairs |
+| 8 slots | OutLayer 40723-40757, e.g. [Lyv1jzXA](https://testnet.nearblocks.io/txns/Lyv1jzXAJeaMA3iPTUmMwx7oQYLjK87j3KiwjfdkZ5c), [6zjBC1vk](https://testnet.nearblocks.io/txns/6zjBC1vkuMWZ7RG3ov3bDgC958ycAzTf4M8e3eAvXQRh) | 710000 each (8/8) |
+| settle | [2nVaJXL5](https://testnet.nearblocks.io/txns/2nVaJXL5AjvJf1CHpevVU6UzGVThD7Hs2KMYhcV9aKAw) | average 0.71, Long 0.62 ((0.71 - 0.40) / 0.50) |
+| redeem | [DsN1Lo4J](https://testnet.nearblocks.io/txns/DsN1Lo4JDb4TWCoEzenByEWG1WYMKJq3WfQWP5YbEgVm), [J3oDL4GJ](https://testnet.nearblocks.io/txns/J3oDL4GJY4XX9nVcHP3FrfaypcXt44w78oyH2ghxbnKN) | 12.40 + 7.60 = 20.00 fUSD |
+
+`node scripts/verify-chain.mjs` for the token contract: contract readable PASS, pinned version = build of oracle-tokens/ PASS, OutLayer version exists PASS, keyless PENDING (not asked).
+
+## Extras 3, 4, 5
+Not built; reasons in BLOCKERS.md B12.

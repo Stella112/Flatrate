@@ -233,3 +233,15 @@ Checked by fetching each page; claims without a source were removed from `docs/F
 |---|---|
 | Function-call keys can only call one contract and "do not allow to attach NEAR tokens to the call" | https://docs.near.org/protocol/access-keys |
 | "Function call access keys cannot be used to transfer $NEAR." | https://nomicon.io/DataStructures/AccessKey |
+
+## 14. Token-price index (extra 2, 2026-11-13)
+| Fact | Source |
+|---|---|
+| `GET https://openrouter.ai/api/v1/models/meta-llama/llama-3.3-70b-instruct/endpoints` answers without a key: `data.id`, `data.endpoints[]` with `provider_name`, `pricing.completion` (USD per token, string), `status` | curl, 2026-11-13; saved as `fixtures/tokens/openrouter-llama-3.3-70b-endpoints.json` |
+| Providers listed then: DeepInfra 0.32, AkashML 0.52, Parasail 0.50, Cloudflare 2.253 (status -2), Groq 0.79, SambaNova 1.20, CoreWeave 0.71, Google 0.72 (two endpoints) USD per 1M output tokens | same file |
+| Selection rule: for each provider in the input (case-insensitive `provider_name`), the lowest `pricing.completion` among its endpoints, x 1e12 = micro-USD per 1M tokens; median over providers. Cloudflare is left out (status -2, meaning not documented) | `oracle-tokens/src/lib.rs` |
+| Live run through OutLayer: request 40690, output median 710000 with 7/7 providers | tx AV8piDb1LvfK8SEUJHDYtdzitmdGND8JfS6NuK1wso6u |
+| OutLayer project `flatrate-maris.testnet/flatrate-oracle-tokens`, version `b7d4679204d59903d538196ff90e7f66f59962b680ee4961b23a43ace46548b3`, `is_active true`, source WasmUrl `https://test.fastfs.io/flatrate-maris.testnet/outlayer.testnet/b7d4679204d59903d538196ff90e7f66f59962b680ee4961b23a43ace46548b3.wasm` | `outlayer deploy`; view `get_version` on `outlayer.testnet` |
+| `outlayer run '<json>'` on Windows passes `{}` as input (quoting lost); `--input <file>` works | requests 40679 (input `{}`), 40690 (file) |
+| Testnet faucet: `near account create-account sponsor-by-faucet-service` funds a new account with 10 NEAR | accounts created and deleted into the root: 7PP14zn6RYGi7aoATpT3gyfnmqataEghX27bbqdnq5wX, 2dqREGPJK7xTu3EgsAuSekcWMS2378CC5LWR3wkTrPQX |
+| NEAR Wallet Selector 10.1.4 (`core`, `meteor-wallet`, `my-near-wallet`, `intear-wallet`); `modal-ui` 10.1.4 depends on react 18.3.1, so it is not used (site is React 19) | `npm view @near-wallet-selector/<pkg>@10.1.4 dependencies` |

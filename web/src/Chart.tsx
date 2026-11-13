@@ -1,3 +1,4 @@
+import { INDEX } from "./config";
 import type { Observation } from "./types";
 import { usd, utc } from "./format";
 
@@ -13,7 +14,7 @@ export function PriceChart({ obs, floor, cap }: { obs: Observation[]; floor: num
   const y = (v: number) => pad.t + ((hi - v) * (H - pad.t - pad.b)) / (hi - lo);
   const path = prices.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Observed H100 price per GPU-hour">
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={`Observed price, ${INDEX.unit}`}>
       {[["cap", cap], ["floor", floor]].map(([name, v]) => (
         <g key={name as string}>
           <line x1={pad.l} x2={W - pad.r} y1={y(v as number)} y2={y(v as number)} className="chart-bound" />

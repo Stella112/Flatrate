@@ -10,6 +10,7 @@
 # Same commit -> same staged bytes -> same wasm sha256.
 #
 # Usage: bash scripts/oracle-reproducible.sh [--twice] [--keep]
+# ORACLE_DIR=oracle-tokens builds the token-price oracle (extra 2) the same way (default: oracle).
 # Prints the sha256 on the last line of stdout. Needs docker and the OutLayer script (cloned
 # into vendor/near-outlayer, or set OUTLAYER_BUILD_SCRIPT).
 set -euo pipefail
@@ -22,11 +23,12 @@ if [ ! -f "$SCRIPT" ]; then
   exit 2
 fi
 
-STAGE="$ROOT/target/oracle-stage"
+ORACLE_DIR="${ORACLE_DIR:-oracle}"
+if [ "$ORACLE_DIR" = oracle ]; then STAGE="$ROOT/target/oracle-stage"; else STAGE="$ROOT/target/$ORACLE_DIR-stage"; fi
 rm -rf "$STAGE"
 mkdir -p "$STAGE/shared"
-cp -r oracle/src oracle/Cargo.lock "$STAGE/"
-cp oracle/Cargo.toml "$STAGE/Cargo.toml"
+cp -r "$ORACLE_DIR/src" "$ORACLE_DIR/Cargo.lock" "$STAGE/"
+cp "$ORACLE_DIR/Cargo.toml" "$STAGE/Cargo.toml"
 cp -r shared/src "$STAGE/shared/"
 # Edit 1: oracle points at ./shared and does not pull it into its workspace.
 sed -i.bak -e 's|path = "../shared"|path = "shared"|' -e 's|^\[workspace\]$|[workspace]\nexclude = ["shared"]|' "$STAGE/Cargo.toml"

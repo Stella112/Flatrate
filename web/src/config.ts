@@ -8,7 +8,37 @@ export const NEARBLOCKS_API = "https://api-testnet.nearblocks.io/v3";
 export const EXPLORER_TX = "https://testnet.nearblocks.io/txns/";
 export const EXPLORER_ACCOUNT = "https://testnet.nearblocks.io/address/";
 
-export const FLATRATE_ID = "flatrate.flatrate-maris.testnet";
+/** One Flatrate contract per index (extra 2 deployed the same contract for LLM token prices). */
+export type IndexInfo = {
+  key: "h100" | "tokens";
+  contractId: string;
+  name: string; // nav label
+  unit: string; // what one price is
+  sources: string; // where prices come from
+};
+export const INDEXES: IndexInfo[] = [
+  {
+    key: "h100",
+    contractId: "flatrate.flatrate-maris.testnet",
+    name: "H100 GPU-hour",
+    unit: "USD per H100 GPU-hour",
+    sources: "five public GPU price APIs (Akash, Vast.ai, RunPod, Shadeform, Verda)",
+  },
+  {
+    key: "tokens",
+    contractId: "tokens.flatrate-maris.testnet",
+    name: "LLM tokens",
+    unit: "USD per 1M output tokens of Llama 3.3 70B",
+    sources: "OpenRouter's public price list for Llama 3.3 70B, one price per provider (seven providers)",
+  },
+];
+/** `?index=tokens` picks the token-price contract; scripted demo mode always replays the H100 market. */
+export const INDEX: IndexInfo = (() => {
+  const q = new URLSearchParams(window.location.search);
+  const k = q.get("demo") === "scripted" ? "h100" : q.get("index");
+  return INDEXES.find((i) => i.key === k) ?? INDEXES[0];
+})();
+export const FLATRATE_ID = INDEX.contractId;
 export const FUSD_ID = "fusd.flatrate-maris.testnet";
 export const OUTLAYER_ID = "outlayer.testnet";
 
