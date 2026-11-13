@@ -4,7 +4,7 @@ SHELL := /bin/bash
 WASM_DIR := target/wasm
 CONTRACTS := fusd mock-outlayer flatrate
 
-.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm oracle-repro oracle-runner vendor verify demo-scripted keeper clean-wasm
+.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm oracle-repro oracle-runner vendor verify demo-scripted keeper test-agent agent agent-dry clean-wasm
 
 ## Build all contract wasm files into target/wasm with cargo-near.
 build:
@@ -61,6 +61,18 @@ verify:
 ## Replays testnet market 2 from fixtures/demo/market-2.json in the sandbox (no keys, no network).
 demo-scripted: build
 	cargo test -p flatrate --test sandbox scripted_demo_replays_market_2 -- --nocapture
+
+## Hedging agent bid planning tests (node, no network).
+test-agent:
+	node --test scripts/agent/plan.test.mjs
+
+## What the hedging agent would bid on the latest DEMO and WEEKLY markets (read-only, no keys).
+agent-dry:
+	AGENT_ACCOUNT=$${AGENT_ACCOUNT:-agent.flatrate-maris.testnet} AGENT_TEMPLATES=DEMO,WEEKLY node scripts/agent/hedge-agent.mjs --dry-run
+
+## One hedging agent pass (needs AGENT_ACCOUNT, AGENT_COMMIT_KEY, AGENT_KEY; see scripts/agent/hedge-agent.mjs).
+agent:
+	node scripts/agent/hedge-agent.mjs --once
 
 ## One keeper pass: KEEPER_ACCOUNT=<you>.testnet make keeper
 keeper:

@@ -44,14 +44,15 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 | Keeper (function-call key only) | `54cf686374f338d49d9a8e12e9912b6fa7f10ee7d5fcc561b6faa4abfac6158e` |
 | Guest sponsor | `flatrate-sponsor.testnet` (key only in the hosting provider) |
 | Fully settled DEMO market | market 11: every transaction in [PROGRESS.md](PROGRESS.md) ("Build prompt v2") and [CLAIMS.md](CLAIMS.md) |
-| Live WEEKLY market | market 10: auction until 2026-11-14 13:23 UTC, then 28 six-hour slots until 2026-11-21 |
+| Live WEEKLY market | market 10: commits until 2026-11-14 11:32 UTC, reveals until 23:32 UTC, then 28 six-hour slots until 2026-11-21 23:32 UTC |
+| Hedging agent (extra) | `agent.flatrate-maris.testnet`: a function-call key limited to the flatrate contract, plus a full-access key used only to commit bids; ran DEMO market 13 end to end |
 
 ## What NEAR does here (remove NEAR and it stops)
 
 - **OutLayer price fetching inside an enclave.** The settlement price is the output of a pinned wasm run by OutLayer at the contract's request. The contract accepts it only through its own callback for a request id it issued, one per time slot.
 - **Yield and resume.** `request_execution` returns a promise that resumes when OutLayer's worker answers; the callback gets the oracle's JSON.
 - **Keyless contract with public `roll_market`.** The contract account has no access keys, so nobody can upgrade it or act as it. Observing, clearing, settling and rolling are public calls; market 12 was rolled by a guest account after the keys were deleted.
-- **Function-call access keys.** The keeper's account holds only a key that may call `clear_auction`, `request_observation`, `settle` and `roll_market` on the flatrate contract.
+- **Function-call access keys.** The keeper's account holds only a key that may call `clear_auction`, `request_observation`, `settle` and `roll_market` on the flatrate contract. The hedging agent rolls, reveals, withdraws refunds and redeems with a key limited to the flatrate contract (allowance 0.25 NEAR).
 - **Implicit accounts in the browser.** Guests get an implicit account from a key made in the browser; every action on the site is a transaction signed by that key.
 - **NEAR Intents quotes.** The "Pay from any chain" page asks NEAR Intents 1Click (and the Aurora Intents API, when its key is configured) for a dry-run quote: what paying in USDC from an EVM chain would cost.
 
@@ -59,6 +60,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 
 - **Unstoppable DeFi**: a fully collateralised two-sided market with no admin price setting, no admin settlement override and public market rolling.
 - **NFTs That Do Something**: a Cover Note is a transferable claim on a future payout; whoever holds it at settlement is paid.
+- **Agent Economy**: `scripts/agent/hedge-agent.mjs` reads a usage forecast, sizes a Long hedge (GPU-hours x band x hedge ratio), prices it from the last settled average, and runs the auction to redemption on its own account. It hedged DEMO market 13 on testnet.
 - **Privacy & Private AI**: bids stay sealed until the reveal window, and prices come from a pinned program run by OutLayer in a TEE, with an attestation per price.
 
 ## Run the checks
@@ -70,6 +72,8 @@ make vendor          # clone OutLayer at the pinned commit (build script + test 
 make verify          # shared tests, builds, oracle, read-only testnet checks; prints a table (a few minutes)
 make test            # shared, contract unit, oracle and sandbox tests (several minutes)
 make demo-scripted   # replay a recorded testnet market in the sandbox
+make test-agent      # hedging agent bid planning tests (node, no network)
+make agent-dry       # what the agent would bid on the latest markets (read-only, no keys)
 make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; prints the sha256
 ```
 
@@ -86,10 +90,11 @@ make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; 
 - **Paying from another chain is a quote only.** 1Click and Aurora have no testnet; quotes are mainnet prices and nothing is sent. 1Click's quote endpoint timed out at times during the build.
 - **Sponsored guest accounts.** The sponsor pays 0.5 testnet NEAR per guest; its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
 - **Rhea.** `ref-finance-101.testnet` is live on testnet (2961 pools), but no Flatrate pool exists: the Rhea extra is not built.
-- **Not built.** Agent auto-hedging, encrypted auction, token price market, chain-signature pay-in, mainnet payments, wallet login.
+- **The agent's commit key is full-access.** A bid is committed through fUSD `ft_transfer_call`, which needs 1 yoctoNEAR attached, and NEAR function-call keys cannot attach a deposit (BLOCKERS.md B11). The agent therefore commits with a full-access key on its own account; its limit is the fUSD it holds and `max_spend_fusd` per bid. Every other agent call uses the flatrate-only key. The contract is keyless, so a deposit-free commit path cannot be added.
+- **Not built.** Encrypted auction, token price market (both need contract changes, ruled out by keyless), chain-signature pay-in, mainnet payments, wallet login.
 
 ## Repository
 
-`contracts/flatrate` (markets, auction, claims, slots, settlement, rolling, Cover Notes), `contracts/fusd` (test stablecoin), `contracts/mock-outlayer` (sandbox only, never deployed), `shared/` (payoff, median, auction clearing), `oracle/` (OutLayer component), `web/` (site and `web/api` serverless functions), `scripts/` (keeper, verify, demo helpers), `fixtures/` (recorded API responses and a recorded market). Build log with real output: [PROGRESS.md](PROGRESS.md). Sources for every external fact: [FACTS.md](FACTS.md). Open items: [BLOCKERS.md](BLOCKERS.md). License: MIT ([LICENSE](LICENSE)).
+`contracts/flatrate` (markets, auction, claims, slots, settlement, rolling, Cover Notes), `contracts/fusd` (test stablecoin), `contracts/mock-outlayer` (sandbox only, never deployed), `shared/` (payoff, median, auction clearing), `oracle/` (OutLayer component), `web/` (site and `web/api` serverless functions), `scripts/` (keeper, hedging agent in `scripts/agent/`, verify, demo helpers), `fixtures/` (recorded API responses and a recorded market). Build log with real output: [PROGRESS.md](PROGRESS.md). Sources for every external fact: [FACTS.md](FACTS.md). Open items: [BLOCKERS.md](BLOCKERS.md). License: MIT ([LICENSE](LICENSE)).
 
 Built at the NEAR Hackathon.

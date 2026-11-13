@@ -41,6 +41,10 @@ fi
 # (docs/Flatrate-full-description-v2.md, "Proof layer"; Maris's decision 2026-11-13).
 row "sandbox tests" INFO "run separately: make test (or make demo-scripted for the recorded market)"
 
+if step "agent planning tests" "$LOG/agent.log" node --test scripts/agent/plan.test.mjs; then
+  row "hedging agent bid planning (node)" PASS "$(grep -m1 'pass ' "$LOG/agent.log")"
+else row "hedging agent bid planning (node)" FAIL "see $LOG/agent.log"; fi
+
 # 3. oracle
 if step "oracle parsing tests" "$LOG/oracle.log" bash -c 'cd oracle && cargo test'; then
   row "oracle parsing vs fixtures/prices" PASS "$(grep -m1 'test result' "$LOG/oracle.log")"

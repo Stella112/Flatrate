@@ -8,8 +8,9 @@ For AI reviewers. Plain steps; each says what to expect.
 3. Open: https://flatrate-gpu.vercel.app/#/proof -> expect: prices with OutLayer request ids, tx links, per-source prices and attestation checks
 4. Run: make demo-scripted           -> expect: a recorded testnet market replayed in the sandbox, ending "SCRIPTED DEMO PASS: sandbox replay equals testnet market 2"
    Open: https://flatrate-gpu.vercel.app/?demo=scripted -> expect: the same market step by step, "Scripted demo" badge on every screen
-5. Read: CLAIMS.md                   -> each row has a test name or a testnet transaction
-6. Read: README.md "Limitations"
+5. Run: make test-agent && make agent-dry -> expect: "pass 5" for the hedging agent's bid planning, then the bid it would place on the latest DEMO and WEEKLY markets (read-only, no keys)
+6. Read: CLAIMS.md                   -> each row has a test name or a testnet transaction
+7. Read: README.md "Limitations"
 ```
 
 Requirements for steps 1, 2 and 4: Linux or macOS (near-sandbox has no Windows build), Rust with `wasm32-unknown-unknown` and `wasm32-wasip2`, `cargo-near` 0.23, Node 20+. Docker is optional: with it, `make verify` rebuilds `oracle/` in OutLayer's pinned compiler image and compares the sha256 with the version pinned on-chain. `make oracle-runner` builds OutLayer's test runner (several minutes, once) so `make verify` can run the oracle wasm on the recorded price responses.
@@ -26,6 +27,7 @@ Where things are:
 | Sandbox tests (incl. attack paths) | `contracts/flatrate/tests/sandbox.rs` |
 | Oracle component | `oracle/src/lib.rs`, `oracle/src/main.rs` |
 | Read-only testnet checks | `scripts/verify-chain.mjs` |
+| Hedging agent (extra) | `scripts/agent/` (planning in `plan.mjs`, runner in `hedge-agent.mjs`); run on DEMO market 13 in `PROGRESS.md` "Extra 1" |
 | Site and serverless functions | `web/src`, `web/api` |
 
 Things to try on the hosted site, each a real testnet transaction from a guest account: the four buttons under "Try to break it" on the Proof page (expected errors `ERR_NOT_OUTLAYER`, `ERR_SLOT_FILLED`, `ERR_PERIOD_NOT_ENDED`, `ERR_NOT_OWNER`).

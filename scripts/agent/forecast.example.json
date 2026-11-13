@@ -1,0 +1,7 @@
+{
+  "_comment": "Example usage forecast for scripts/agent/hedge-agent.mjs. gpu_hours: H100 hours the agent expects to buy during one market period. hedge_ratio: share of that price risk to cover. max_premium_cents: how far above the fair Long price it will bid. max_spend_fusd: cap on the escrow for one bid.",
+  "gpu_hours": 40,
+  "hedge_ratio": 0.5,
+  "max_premium_cents": 3,
+  "max_spend_fusd": 50
+}

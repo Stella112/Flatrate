@@ -397,3 +397,40 @@ Two accounts committed opposite bids so the weekly market opens from a two-sided
 | holder.flatrate-maris.testnet | [5uN4cHfE](https://testnet.nearblocks.io/txns/5uN4cHfEUu3d4ZXvQQvCyWSnspkeddqn2ToQoM3u4og5) | 30 fUSD |
 
 `get_market 10` after the commits: `status: Auction`, `bid_count: 2`. Reveal window from the contract: 2026-11-14 11:32:43 to 23:32:43 UTC; the keeper clears after that. The bid contents go here after the reveal.
+
+
+## Extra 1: agent auto-hedging (2026-11-13, after `go extras`)
+
+Design (Maris chose "two keys, budget-capped" after B11): the agent runs on its own account `agent.flatrate-maris.testnet` (created [8est56km](https://testnet.nearblocks.io/txns/8est56kmNDtBR8vyfTh4zXVUBf8m6V1QQRCgzqaqRqvV), 0.5 NEAR, 100 fUSD from the faucet [ebeo1SSe](https://testnet.nearblocks.io/txns/ebeo1SSemgkLa1GM3DNo891v9mwbSRbceENuK85Ts1V), fUSD storage [Axyar2EG](https://testnet.nearblocks.io/txns/Axyar2EGcVtUQgLHL6QjLvtsH7MWcEnNBMKmnNf9m3vG)). A full-access key signs only the commit (fUSD `ft_transfer_call` with 1 yoctoNEAR); a function-call key limited to `flatrate.flatrate-maris.testnet` (allowance 0.25 NEAR, add [319tMxqk](https://testnet.nearblocks.io/txns/319tMxqk8t7NLjaxtNR5Qz2xzrEuJBNhxNPCiWjSjzCv)) signs everything else. Both key files are outside the repository (`~/.near-credentials/testnet/agent.flatrate-maris.testnet/`), made by `scripts/agent/new-key.mjs`, which prints only the public key.
+
+Code: `scripts/agent/plan.mjs` (pure sizing and pricing), `scripts/agent/plan.test.mjs`, `scripts/agent/hedge-agent.mjs` (runner, salts saved in gitignored `target/agent-state.json` before the commit is sent), `scripts/agent/forecast.example.json`. Makefile: `test-agent`, `agent-dry`, `agent`. `make verify` runs the planning tests.
+
+```
+$ node --test scripts/agent/plan.test.mjs
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+```
+
+A commit signed with the flatrate-only key is refused before sending:
+```
+Error:
+   0: Error: Having a deposit with a function call action is not allowed with a function call access key.
+```
+
+DEMO market 13, run by the agent with `AGENT_TEMPLATES=DEMO AGENT_ROLL=DEMO`, `holder` as the other side:
+
+| Step | Who / key | Tx | Result |
+|---|---|---|---|
+| roll_market DEMO | agent, function-call key | [2AGP2qVa](https://testnet.nearblocks.io/txns/2AGP2qVa6eWqyLRqcfPSg3SdBNULhThiXme5m4hW9mD6) | market 13, band 2.30 / 5.50 |
+| commit | agent, full-access key | [6Y3CYqE8](https://testnet.nearblocks.io/txns/6Y3CYqE8eWvWozV52N3E5k1yAUAdfmmJnL1vpHWsEmF2) | Long 64 @ <= 56c (40 h x $3.20 x 0.5; fair 53c from market 12 average 3.98 + 3c), escrow 40 fUSD |
+| commit | holder | [Ai2oimvw](https://testnet.nearblocks.io/txns/Ai2oimvwRY2hA3o5wbBqUZ2WGNH2ZgRM7eqoiF35FRXc) | Short 40 @ <= 46c, escrow 25 fUSD |
+| reveal | agent, function-call key | [H1B8xAts](https://testnet.nearblocks.io/txns/H1B8xAtsJnFT6K7LHfXnPDXXKiQ3VUApKkF5Lkix1Thq) | |
+| reveal | holder (`scripts/reveal-bids.sh`) | [Dfbcrk16](https://testnet.nearblocks.io/txns/Dfbcrk16Lkkpt8msSadXTA5xMuq3VEoHxTPbHjcKNReE) | |
+| clear_auction | keeper | [ErLTs88x](https://testnet.nearblocks.io/txns/ErLTs88x196mHc5gycRJwJJpq6sCpdBWjiWj5A7DbaWo) | opened at 54c, 40 pairs (agent filled 40 of 64); the agent's own clear 2 s later was refused (already cleared) |
+| withdraw_refund | agent, function-call key | [Dcib3gVP](https://testnet.nearblocks.io/txns/Dcib3gVPoYkpqM5DVcJMQ6wy16JH5Exvkw7tYwvTF3Tj) | 18.40 fUSD (40 - 40 x 0.54) |
+| 6 slots | keeper / OutLayer 38600-38631 | see keeper log | 3.98 each; slot 6 `oracle_no_output` |
+| settle | keeper | [4S5feCw7](https://testnet.nearblocks.io/txns/4S5feCw7VD9na2M2D716vKwbyNC5jkrjuy9DgvcyfnXE) | average 3.98, Long 0.525 |
+| redeem | agent, function-call key | [5GP7jvPw](https://testnet.nearblocks.io/txns/5GP7jvPw5Tb5K3cBS4duiYAf5AtPyPD7EwUWhbeNuaGW) | 40 x 0.525 = 21.00 fUSD |
+
+Agent fUSD: 100 -> 99.40 (paid 21.60 for the hedge, received 21.00; the price did not move, so the hedge cost its premium).

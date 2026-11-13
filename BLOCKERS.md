@@ -99,3 +99,4 @@ Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run 
 - The contract is keyless, so a zero-deposit commit path cannot be added. The same holds for extras 2 and 3, which need contract changes (new index, enclave clearing).
 - With a flatrate-only key the agent can do: reveal_bid, clear_auction, settle, redeem, withdraw_refund, claim_transfer, wrap_note, unwrap_note, redeem_note, roll_market, request_observation.
 - Waiting for Maris to choose a design.
+- Resolution (2026-11-13): Maris chose two keys, budget-capped. The agent commits with a full-access key on its own account and uses a flatrate-only function-call key for everything else; README Limitations says so. Run on DEMO market 13: PROGRESS.md "Extra 1".
