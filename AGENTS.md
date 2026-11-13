@@ -27,6 +27,8 @@ Where things are:
 | Sandbox tests (incl. attack paths) | `contracts/flatrate/tests/sandbox.rs` |
 | Oracle component | `oracle/src/lib.rs`, `oracle/src/main.rs` |
 | Read-only testnet checks | `scripts/verify-chain.mjs` |
+| Token-price index (extra 2) | `oracle-tokens/`, `scripts/deploy-tokens.sh`, contract `tokens.flatrate-maris.testnet`; `make verify` rows prefixed `[tokens]` |
+| Wallet login (extra 6) | `web/src/wallet.ts` |
 | Hedging agent (extra) | `scripts/agent/` (planning in `plan.mjs`, runner in `hedge-agent.mjs`); run on DEMO market 13 in `PROGRESS.md` "Extra 1" |
 | Site and serverless functions | `web/src`, `web/api` |
 
