@@ -46,6 +46,8 @@ function localApi(): Plugin {
 
 export default defineConfig({
   plugins: [react(), localApi()],
+  // Wallet Selector's Meteor module needs Node's `buffer` in the browser: use the npm package.
+  resolve: { alias: { buffer: "buffer/" } },
   // Recorded fixtures (demo market, 1Click quote) are imported from ../fixtures.
   server: { fs: { allow: [".."] } },
 });

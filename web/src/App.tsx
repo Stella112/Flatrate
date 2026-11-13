@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { EXPLORER_ACCOUNT, FLATRATE_ID, FUSD_ID, isScriptedDemo } from "./config";
-import { accountExists, call, forgetGuest, loadOrCreateGuest, nearBalance, sponsor, view, type Guest } from "./near";
+import { accountExists, call, forgetGuest, loadOrCreateGuest, nearBalance, sponsor, view, walletUser, type Guest } from "./near";
+import { listWallets, signIn, signOut, signedInWallet, type WalletChoice } from "./wallet";
 import { near, shortAcct, units } from "./format";
 import { demoRecordedAt, demoSteps } from "./demo";
 import { TxView, useAction, useAsync } from "./ui";
@@ -17,6 +18,7 @@ type Ctx = {
   setStep: (n: number) => void;
   funded: boolean;
   refreshWallet: () => void;
+  setUser: (g: Guest | null) => void;
 };
 const AppCtx = createContext<Ctx | null>(null);
 export const useApp = () => useContext(AppCtx)!;
@@ -43,8 +45,81 @@ export function DemoBadge() {
   );
 }
 
+const LOGIN_KEY = "flatrate.login";
+const remember = (v: string | null) => {
+  try {
+    if (v) localStorage.setItem(LOGIN_KEY, v);
+    else localStorage.removeItem(LOGIN_KEY);
+  } catch {
+    /* ignore */
+  }
+};
+
+function WalletLogin() {
+  const { setUser } = useApp();
+  const [open, setOpen] = useState(false);
+  const [choices, setChoices] = useState<WalletChoice[] | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="row">
+      {!open ? (
+        <button
+          className="ghost"
+          onClick={async () => {
+            setOpen(true);
+            setMsg(null);
+            try {
+              setChoices(await listWallets());
+            } catch (e) {
+              setMsg(String((e as Error).message || e));
+            }
+          }}
+        >
+          Sign in with a NEAR wallet
+        </button>
+      ) : (
+        <>
+          <small className="muted">Testnet wallets:</small>
+          {!choices && !msg && <small className="muted">loading…</small>}
+          {choices?.map((c) => (
+            <button
+              key={c.id}
+              disabled={busy || !c.available}
+              title={c.available ? "" : "not available in this browser"}
+              onClick={async () => {
+                setBusy(true);
+                setMsg(null);
+                try {
+                  const id = await signIn(c.id);
+                  const w = await signedInWallet();
+                  if (id && w) {
+                    remember("wallet");
+                    setUser(walletUser(w.accountId, w.wallet, c.name));
+                  } else setMsg("The wallet did not return an account (a redirect wallet finishes after it sends you back).");
+                } catch (e) {
+                  setMsg(String((e as Error).message || e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {c.name}
+            </button>
+          ))}
+          <button className="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </button>
+        </>
+      )}
+      {msg && <small className="err">{msg}</small>}
+    </div>
+  );
+}
+
 function WalletPanel() {
-  const { guest, demo, funded, refreshWallet } = useApp();
+  const { guest, demo, funded, refreshWallet, setUser } = useApp();
+  const isWallet = !!guest.wallet;
   const bal = useAsync(
     async () => {
       if (demo) return null;
@@ -67,7 +142,7 @@ function WalletPanel() {
   return (
     <div className="wallet">
       <div>
-        <span className="muted">Guest account </span>
+        <span className="muted">{isWallet ? `Wallet account (${guest.walletName}) ` : "Guest account "}</span>
         <a className="mono" href={EXPLORER_ACCOUNT + guest.accountId} target="_blank" rel="noreferrer" title={guest.accountId}>
           {shortAcct(guest.accountId)}
         </a>
@@ -78,7 +153,7 @@ function WalletPanel() {
           </span>
         )}
       </div>
-      {b && !b.exists && (
+      {!isWallet && b && !b.exists && (
         <div className="row">
           <button
             disabled={sponsoring}
@@ -107,6 +182,18 @@ function WalletPanel() {
           >
             {faucet.busy ? "…" : "Faucet: +100 fUSD"}
           </button>
+          {isWallet ? (
+            <button
+              className="ghost"
+              onClick={async () => {
+                await signOut().catch(() => undefined);
+                remember(null);
+                setUser(null);
+              }}
+            >
+              Sign out
+            </button>
+          ) : (
           <button
             className="ghost"
             onClick={() => {
@@ -118,8 +205,10 @@ function WalletPanel() {
           >
             New guest
           </button>
+          )}
         </div>
       )}
+      {!isWallet && <WalletLogin />}
       {sponsorMsg && <small className="mono">{sponsorMsg}</small>}
       {faucet.view}
       {bal.error && <small className="err">{bal.error}</small>}
@@ -176,11 +265,30 @@ function DemoStepper() {
 
 export function App() {
   const demo = isScriptedDemo();
-  const guest = useMemo(() => loadOrCreateGuest(), []);
+  const localGuest = useMemo(() => loadOrCreateGuest(), []);
+  const [user, setUser] = useState<Guest | null>(null);
+  const guest = user ?? localGuest;
+  // Restore a wallet session only if this browser signed in before (keeps the selector off the guest path).
+  useEffect(() => {
+    let wanted = false;
+    try {
+      wanted = localStorage.getItem(LOGIN_KEY) === "wallet";
+    } catch {
+      /* ignore */
+    }
+    if (!wanted || isScriptedDemo()) return;
+    signedInWallet()
+      .then(async (w) => {
+        if (!w) return remember(null);
+        const name = (await listWallets()).find((c) => c.id === w.wallet.id)?.name || w.wallet.id;
+        setUser(walletUser(w.accountId, w.wallet, name));
+      })
+      .catch(() => undefined);
+  }, []);
   const [step, setStep] = useState(0);
   const [funded, setFunded] = useState(false);
   const route = useRoute();
-  const ctx: Ctx = { guest, demo, step, setStep, funded, refreshWallet: () => setFunded((f) => !f) };
+  const ctx: Ctx = { guest, demo, step, setStep, funded, refreshWallet: () => setFunded((f) => !f), setUser };
 
   let page: ReactNode;
   if (route[0] === "market" && route[1]) page = <MarketPage id={route[1]} />;

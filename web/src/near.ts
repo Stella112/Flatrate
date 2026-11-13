@@ -1,6 +1,7 @@
 // Chain access: views over public RPC, and transactions signed in the browser by the guest key.
 import { Account, JsonRpcProvider, KeyPair, actions } from "near-api-js";
 import type { KeyPairString } from "near-api-js";
+import { actionCreators } from "@near-js/transactions";
 import { ARCHIVAL_RPC_URL, FLATRATE_ID, FUSD_ID, RPC_URL, TGAS } from "./config";
 
 export const provider = new JsonRpcProvider({ url: RPC_URL });
@@ -118,7 +119,14 @@ export async function txStatus(hash: string, sender: string): Promise<TxResult> 
 
 const GUEST_KEY = "flatrate.guest.key";
 
-export type Guest = { accountId: string; keyPair: KeyPairString; account: Account };
+/** Anything that can sign for the user: the guest key in this browser, or a NEAR wallet (extra 6). */
+export type WalletSigner = {
+  signAndSendTransaction(p: { signerId?: string; receiverId: string; actions: ReturnType<typeof actionCreators.functionCall>[] }): Promise<unknown>;
+};
+export type Guest = { accountId: string; keyPair?: KeyPairString; account?: Account; wallet?: WalletSigner; walletName?: string };
+
+/** A signed-in wallet account used in place of the guest. */
+export const walletUser = (accountId: string, wallet: WalletSigner, walletName: string): Guest => ({ accountId, wallet, walletName });
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -172,6 +180,17 @@ export async function call(
   opts: { gasTgas?: number; deposit?: bigint; waitUntil?: "FINAL" | "INCLUDED_FINAL" } = {},
 ): Promise<TxResult> {
   const gas = BigInt(opts.gasTgas ?? 100) * TGAS;
+  if (guest.wallet) {
+    const r = await guest.wallet.signAndSendTransaction({
+      signerId: guest.accountId,
+      receiverId,
+      actions: [actionCreators.functionCall(method, args, gas, opts.deposit ?? 0n)],
+    });
+    // Redirect wallets return nothing here; the result shows up after the page comes back.
+    if (!r) return { hash: "", ok: true, error: "sent through the wallet; refresh after it returns", receipts: [], events: [] };
+    return parseOutcome(r);
+  }
+  if (!guest.account) throw new Error("no signer");
   const r = await guest.account.signAndSendTransaction({
     receiverId,
     actions: [actions.functionCall(method, args, gas, opts.deposit ?? 0n)],
