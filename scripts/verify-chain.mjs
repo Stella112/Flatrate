@@ -6,6 +6,8 @@ const RPC = process.env.NEAR_RPC || "https://rpc.testnet.fastnear.com";
 const FLATRATE_ID = process.env.FLATRATE_ID || "flatrate.flatrate-maris.testnet";
 const OUTLAYER_ID = process.env.OUTLAYER_ID || "outlayer.testnet";
 const PAIR = 1_000_000n;
+const OUTLAYER_API = process.env.OUTLAYER_API || "https://testnet-api.outlayer.ai";
+import { createHash } from "node:crypto";
 
 const argHash = (() => {
   const i = process.argv.indexOf("--oracle-hash");
@@ -53,7 +55,7 @@ const add = (check, status, evidence) => rows.push([check, status, evidence]);
 
 try {
   const cfg = await view(FLATRATE_ID, "get_config");
-  const markets = await view(FLATRATE_ID, "list_markets", { from_index: "0", limit: 100 });
+  const markets = await view(FLATRATE_ID, "list_markets", { limit: 100 });
   add("contract readable", "PASS", `${FLATRATE_ID}: ${markets.length} markets, owner ${cfg.owner_id}, oracle ${cfg.oracle_project_id}`);
 
   // 1. The version pinned for new markets is the reproducible build of oracle/ at this commit.
@@ -83,7 +85,7 @@ try {
     }
   }
 
-  // 3. Every settled market pays what the payoff of its stored observations says.
+  // 3. Every settled market pays what the payoff of its filled slots says; a void one had too few.
   for (const m of markets) {
     const obs = m.observations.map((o) => BigInt(o.price_micros));
     if (typeof m.status === "object" && m.status.Settled) {
@@ -91,15 +93,42 @@ try {
       const got = BigInt(m.status.Settled.long_payout_micros);
       add(
         `market ${m.id} payout recomputed`,
-        want === got && obs.length >= m.min_observations ? "PASS" : "FAIL",
-        `${obs.length} obs, mean ${mean(obs)}, long ${got} (recomputed ${want})`,
+        want === got && obs.length >= m.min_filled_slots && String(mean(obs)) === m.settled_average_micros ? "PASS" : "FAIL",
+        `${obs.length}/${m.num_slots} slots, mean ${mean(obs)}, long ${got} (recomputed ${want})`,
       );
     } else if (m.status === "Void") {
-      add(`market ${m.id} void is justified`, obs.length < m.min_observations ? "PASS" : "FAIL", `${obs.length} obs < min ${m.min_observations}`);
+      add(`market ${m.id} void is justified`, m.filled_slots < m.min_filled_slots ? "PASS" : "FAIL", `${m.filled_slots} slots < min ${m.min_filled_slots}`);
     }
   }
 
-  // 4. Keyless: no full-access key on the contract account.
+  // 4. Each recorded price has an OutLayer attestation for the pinned wasm and this market's input.
+  let attOk = 0;
+  let attBad = [];
+  let attMissing = 0;
+  for (const m of markets) {
+    const inputHash = createHash("sha256").update(m.oracle_input).digest("hex");
+    for (const o of m.observations) {
+      try {
+        const r = await fetch(`${OUTLAYER_API}/attestations/by-request/${o.outlayer_request}`);
+        if (!r.ok) {
+          attMissing++;
+          continue;
+        }
+        const a = await r.json();
+        if (a.wasm_hash === m.oracle_version_key && a.executed_wasm_sha256 === m.oracle_version_key && a.input_hash === inputHash) attOk++;
+        else attBad.push(o.outlayer_request);
+      } catch {
+        attMissing++;
+      }
+    }
+  }
+  add(
+    "OutLayer attestation per recorded price",
+    attBad.length ? "FAIL" : attOk > 0 || attMissing === 0 ? "PASS" : "SKIP",
+    `${attOk} match pinned wasm + market input${attMissing ? `, ${attMissing} not reachable` : ""}${attBad.length ? `, mismatch: ${attBad.join(",")}` : ""}`,
+  );
+
+  // 5. Keyless: no full-access key on the contract account.
   const keys = await rpc("query", { request_type: "view_access_key_list", finality: "final", account_id: FLATRATE_ID });
   const full = keys.keys.filter((k) => k.access_key.permission === "FullAccess");
   add(

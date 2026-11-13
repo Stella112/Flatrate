@@ -284,3 +284,49 @@ Screenshots: `docs/screens/01..09`. Found and fixed during the run: the auction 
 ### Acceptance
 - Full flow from a clean browser profile on the hosted URL (guest, faucet, commit, reveal, clear, mint, wrap, transfer, settle, redeem): PASS
 - Screenshots in docs/screens/: PASS
+
+## Build prompt v2 (2026-11-13)
+
+Maris sent a revised build prompt (time slots, market templates, public `roll_market`, Aurora quote, attestation on the Proof page, three tracks). Decisions in chat on 2026-11-13: fresh start in place (not a migration), OutLayer fees paid from a contract-held budget so the keeper runs on a function-call key, Maris adds `AURORA_INTENTS_API_KEY` in Vercel, Maris adds `docs/Flatrate-full-description-v2.md`.
+
+### Phase 0 additions
+- Official rules read from `https://nearhackathon.com/HACKATHON.md` (saved as `fixtures/HACKATHON.md`): one person may send at most 2 independent projects and each README names the other (Q-015), testnet-only projects are eligible (Q-010), the demo post says "built at NEAR HACKATHON" and tags @NEARProtocol and #NEARHackathon, the hosted demo stays up to 2026-11-18 and ideally 2026-11-25 (Q-012), add a LICENSE file (Q-014).
+- Rhea: `near contract call-function as-read-only ref-finance-101.testnet get_number_of_pools` -> `2961`; the account holds contract code (sha256 `8918c505...`). Live on testnet; only relevant to the Rhea extra.
+- Slot timing: OutLayer runs took 12-15 s from request to callback (FACTS.md 9.3, Phase 3 markets), under the 40 s limit, so the DEMO slot stays at 1 minute.
+- Attestation: `GET https://testnet-api.outlayer.ai/attestations/by-request/{request_id}` (near-outlayer `API.md:124`, CORS `*`) returns `tdx_quote`, `worker_measurement`, `wasm_hash`, `executed_wasm_sha256`, `input_hash`, `output_hash`, `transaction_hash`. For request 33589: `input_hash` = sha256 of the market's oracle input and `output_hash` = sha256 of the exact `SuccessValue` bytes OutLayer returned to the contract (checked with Python).
+- Aurora Intents quote: `POST https://intents-api.aurora.dev/api/quote/{apiKey}`, same request body as 1Click (docs.intents.aurora.dev, Swap API reference "Request a quote").
+
+### Contract v2
+- `contracts/flatrate`: templates `DEMO` and `WEEKLY` stored at init (no setter); `create_market(template, floor, cap)` owner-only, once per template; `roll_market(template)` public, only after the previous market is Settled or Void, band = settled average x0.6 / x1.4 rounded down to 10 cents (previous band after a void); one observation per slot (`ERR_SLOT_FILLED` when the slot has a price or a request in flight, `ERR_NOT_IN_PERIOD` outside the period), result written to the slot recorded at request time, slot freed on any rejection; settlement on the mean of filled slots, `settled_average_micros` stored; `request_observation` takes no deposit (the contract pays OutLayer from its balance above storage and a 0.5 NEAR reserve; `payer_account_id` = the contract, so OutLayer refunds it); `fund_observations` lets anyone add NEAR. `set_oracle_version` removed (version fixed at init). Storage under new byte prefixes; market ids from 10, note ids from 1000; `reset` (private, ignore_state) for the fresh start.
+- `contracts/mock-outlayer`: `Hold` mode pauses with yield/resume; `mock_resume` answers later.
+- Sandbox (VPS): `test result: ok. 29 passed; 0 failed` after two test fixes (budget parsed as u128; the held-request test now crosses one 10 s slot so it stays inside the 200-block yield window). New tests: `create_market_is_owner_only_and_once_per_template`, `second_request_in_filled_slot_fails`, `second_request_while_pending_fails_and_late_callback_lands_in_its_slot`, `failed_request_frees_the_slot`, `request_outside_period_fails`, `average_uses_filled_slots_only`, `roll_before_previous_done_fails_and_roll_after_settle_uses_the_average`, `roll_after_void_reuses_the_band_with_no_full_access_key`, `reset_over_deployed_state_starts_empty`. 200-bid clear: 36.35 TGas.
+- Deployed: `flatrate.wasm` sha256 `1965f27612b387177c05c4003d6d7e9a0ee5fa577e549dedc82278276664e030` (430840 bytes) with init `reset`, tx [6TtmxvUv](https://testnet.nearblocks.io/txns/6TtmxvUvg5j9Gk691QUovZmPVEVbdH7m4iso33zPpYmD). `get_config`: version `6c252d52...`, observation deposit 0.006 NEAR, budget 0.6157 NEAR.
+
+### Keeper on a function-call key
+On the VPS: function-call key added to the keeper account `54cf6863...158e` for `clear_auction, request_observation, settle, roll_market` on `flatrate.flatrate-maris.testnet` (tx [CXF3hSog](https://testnet.nearblocks.io/txns/CXF3hSogFi7TxK8gpaneyT6wGjpebAKHNFtfq2Ejghfp)); full-access key deleted (tx [9Tuxo7dz](https://testnet.nearblocks.io/txns/9Tuxo7dzPjLCqLPaLjqtYi76U28J2pWnmvwN7sSi758T)). `near account list-keys` -> one key, `only do ["clear_auction", "request_observation", "settle", "roll_market"] function calls on flatrate.flatrate-maris.testnet`. Cron every minute with `flock`; rolls WEEKLY only.
+
+### Markets
+- WEEKLY market 10: `create_market` tx [4UzaURrs](https://testnet.nearblocks.io/txns/4UzaURrsN5UiRg66SFYfnLsxhyMdQWmirLckV8DCBJDE). Auction to 2026-11-14 13:23 UTC, then 28 six-hour slots, 14 needed.
+- DEMO market 11, run on the hosted site by a new guest `cb4edd970f31d24a89611b3bd81dc91daae55dcba6c3eb6f182b0e8d344653a1` (browser key; the pane was hidden for part of the run, so some buttons were pressed through the page's own handlers with `element.click()` instead of a mouse click):
+
+| Step | Tx | Result |
+|---|---|---|
+| guest funded by sponsor | [HBpv2MHw](https://testnet.nearblocks.io/txns/HBpv2MHwYGek7MmurXBuurSJVGSf8E8VNZ24op8DW3J4), [9Pnpp94Q](https://testnet.nearblocks.io/txns/9Pnpp94QfqueM9Ra8LjvVLC7XSk7B6QDmJBJPjDaPmu) | 0.5 NEAR, 100 fUSD |
+| faucet | [CEhirJAo](https://testnet.nearblocks.io/txns/CEhirJAoqr4s2HvrJP2Q3Zgij93VC5jSfHFY65Y7wsNj) | +100 fUSD |
+| create DEMO market 11 (owner, once) | [CUckbbRn](https://testnet.nearblocks.io/txns/CUckbbRnTs9xKZcGtr4t3erDamUoi5j8QSHoJpvwyWtc) | |
+| commit Long 10 @ 55c / Short 10 @ 50c | [Ed942eQF](https://testnet.nearblocks.io/txns/Ed942eQFcoKrd8Avu8HT6nJDnSUE3EQ4NmbEfoupLza), [61o6jLrZ](https://testnet.nearblocks.io/txns/61o6jLrZwh856z2oth2N4uAvBc74dm8HxEnsknt2M1Jj) | sealed |
+| reveal both | [7ea1xbdQ](https://testnet.nearblocks.io/txns/7ea1xbdQ4MhBDg1S3tmK1bjgrL5D99Lt1jHaQ8sPHpe6), [AA1JGiHM](https://testnet.nearblocks.io/txns/AA1JGiHM5G1yneQssGJXJ7qQYtmUk47KWa8kMqsgBf9n) | |
+| clear | [Cm2g9Ve7](https://testnet.nearblocks.io/txns/Cm2g9Ve7s5S6czb1xnCY661ywbUMfKnmxk7qBgQE4sJ4) | 50c, 10 pairs |
+| guest requests slot 1 | [DEbDWb1S](https://testnet.nearblocks.io/txns/DEbDWb1SL2VsqKARNDVZ3K4CqzVYHHdWmGVQNfYds7N1) | OutLayer run failed (outage, BLOCKERS B10): rejected, slot freed, deposit refunded |
+| mint 5 pairs | [5roXfJ7z](https://testnet.nearblocks.io/txns/5roXfJ7zUyRdWpcnBgWKM5XVDbDkELAdyW3v1JfBEFUE) | |
+| wrap 5 Long | [G2WH2YLY](https://testnet.nearblocks.io/txns/G2WH2YLYGQRgzBAGSR8nBGw2jADWDrjy5iAJYbViY1Wx) | Cover Note #1000 |
+| withdraw refund | [AGqFSvDw](https://testnet.nearblocks.io/txns/AGqFSvDwB5Zqo7U2yHxto67TjnWuzCJVyqzRY82i7ToL) | 1 fUSD |
+| transfer note to holder | [FSJ3gyc1](https://testnet.nearblocks.io/txns/FSJ3gyc15xd8osW8AMeCYQ5EzrFsA1hruHAXoVHzNXFK) | owner holder |
+| keeper slots 3, 5, 6, 7 | [bKUPEvUe](https://testnet.nearblocks.io/txns/bKUPEvUeC9RZ96pKuL8F9t8xV2YUnSZp2dYh4W5FWas), [9nctEDcL](https://testnet.nearblocks.io/txns/9nctEDcL4zxqJZMcmsdan9qXUZJUX5qGtHTQtCDiB5gD), [ChxqAXaR](https://testnet.nearblocks.io/txns/ChxqAXaRMSMBGNzpW4PGjNZNoktzVSeL4Tv15BGoVGs9), [7e4pgnnn](https://testnet.nearblocks.io/txns/7e4pgnnnzQyHC85r2DXqy33tXpfqHcpDfqEqShVrtqfv) | 3980000 each, OutLayer 38206, 38218, 38226, 38237 |
+| keeper settles | [H2HUitUD](https://testnet.nearblocks.io/txns/H2HUitUDJG2TUC8rvKWbx3HWF1fRVMv8Dex5fsoW5bLj) | average 3980000, Long 493750 |
+| guest redeems 10 Long + 15 Short | [BGEz8gGT](https://testnet.nearblocks.io/txns/BGEz8gGTrpa578cgQDLTCyvXntdaJx9ZMR41GsiXM5ZH) | 12.53125 fUSD (185 -> 197.53125) |
+| holder redeems the note | [2mrCGSf9](https://testnet.nearblocks.io/txns/2mrCGSf9E1ctpNR878N3NbcQbUaFRYAMFagCJ8qwixR7) | 2.46875 fUSD |
+
+`node scripts/verify-chain.mjs --oracle-hash 6c252d52...`: market 11 payout recomputed PASS (4/8 slots, mean 3980000, long 493750); OutLayer attestation per recorded price PASS (4 match pinned wasm + market input); keyless PENDING.
+
+Found and fixed during the run: the site waited for FINAL on `request_observation`; the RPC answers 408 while the yield is open, so the page stayed busy. It now returns once the transaction is included.

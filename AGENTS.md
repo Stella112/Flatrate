@@ -27,4 +27,4 @@ Where things are:
 | Read-only testnet checks | `scripts/verify-chain.mjs` |
 | Site and serverless functions | `web/src`, `web/api` |
 
-Things to try on the hosted site, each a real testnet transaction from a guest account: the four buttons under "Try to break it" on the Proof page (expected errors `ERR_NOT_OUTLAYER`, `ERR_PERIOD_NOT_ENDED`, `ERR_UNKNOWN_REQUEST`, `ERR_NOT_OWNER`).
+Things to try on the hosted site, each a real testnet transaction from a guest account: the four buttons under "Try to break it" on the Proof page (expected errors `ERR_NOT_OUTLAYER`, `ERR_SLOT_FILLED`, `ERR_PERIOD_NOT_ENDED`, `ERR_NOT_OWNER`).
