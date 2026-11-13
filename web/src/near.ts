@@ -169,19 +169,24 @@ export async function call(
   receiverId: string,
   method: string,
   args: Record<string, unknown>,
-  opts: { gasTgas?: number; deposit?: bigint } = {},
+  opts: { gasTgas?: number; deposit?: bigint; waitUntil?: "FINAL" | "INCLUDED_FINAL" } = {},
 ): Promise<TxResult> {
   const gas = BigInt(opts.gasTgas ?? 100) * TGAS;
   const r = await guest.account.signAndSendTransaction({
     receiverId,
     actions: [actions.functionCall(method, args, gas, opts.deposit ?? 0n)],
     throwOnFailure: false,
-    waitUntil: "FINAL",
+    waitUntil: opts.waitUntil ?? "FINAL",
   });
   return parseOutcome(r);
 }
 
-export const callFlat = (g: Guest, method: string, args: Record<string, unknown>, opts?: { gasTgas?: number; deposit?: bigint }) =>
+export const callFlat = (
+  g: Guest,
+  method: string,
+  args: Record<string, unknown>,
+  opts?: { gasTgas?: number; deposit?: bigint; waitUntil?: "FINAL" | "INCLUDED_FINAL" },
+) =>
   call(g, FLATRATE_ID, method, args, opts);
 
 /** fUSD `ft_transfer_call` into Flatrate with a JSON message (mint_pair or commit_bid). */

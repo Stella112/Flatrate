@@ -81,3 +81,9 @@ Original note:
 ## B9. Flatrate description page could not be read
 
 `https://claude.ai/artifact/FdtYGwJkuJcGs1PFtqycHq` (named in CLAUDE.md as the product description with the Demo section) answers "artifact not found or not shared with you" for this account. `docs/demo-script.md` follows the CLAUDE.md brief instead; Maris should check it against that page.
+
+## B10. OutLayer testnet outage during the first v2 DEMO market (2026-11-13 ~11:44-11:50 UTC)
+
+Every run for market 11 failed inside OutLayer: guest request `DEbDWb1SL2VsqKARNDVZ3K4CqzVYHHdWmGVQNfYds7N1` and keeper request `Do3i2x8hunaBS89X6WUjokzsxJAeFRyRjEvubFLsz21G` (OutLayer request 38198) both log `Execution promise failed: Failed. Refunded 5000000000000000000000 yoctoNEAR`; the contract recorded `observation_rejected: oracle_no_output` and freed the slot each time. A direct `outlayer run flatrate-maris.testnet/flatrate-oracle ...` with no contract involved failed the same minute (`the request failed with timeout error`), and `GET https://testnet-api.outlayer.ai/public/workers` showed the testnet workers with 35 s of uptime (restarting). The same oracle version recorded prices for market 5 at 00:16 and 06:16 UTC. Market 11 is expected to settle void; the settled DEMO run is repeated once OutLayer answers again.
+
+Also found: the browser request waited for FINAL, which the RPC answers with HTTP 408 while the yield is open; the site now returns once the request is included and shows the result through the slot status.

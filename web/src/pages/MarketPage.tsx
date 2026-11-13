@@ -285,7 +285,9 @@ function PositionCard({
   const slot = useAsync(() => getSlotInfo(demo, mk.id), [demo, mk.id, mk.filled_slots], demo ? undefined : 10000);
   const requestObservation = () =>
     // No deposit: the contract pays OutLayer from its observation budget.
-    act.run(() => callFlat(guest, "request_observation", { market_id: mk.id }, { gasTgas: 300 }), () => {
+    // The transaction stays open until OutLayer answers (yield/resume, often 15 s or more), which
+    // can outlast an RPC request; return once it is included and let the slot status show the result.
+    act.run(() => callFlat(guest, "request_observation", { market_id: mk.id }, { gasTgas: 300, waitUntil: "INCLUDED_FINAL" }), () => {
       onDone();
       slot.reload();
     });
