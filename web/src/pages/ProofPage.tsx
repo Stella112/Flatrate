@@ -2,7 +2,7 @@ import { href, useApp } from "../App";
 import { EXPLORER_ACCOUNT, FLATRATE_ID, OUTLAYER_ID } from "../config";
 import { getConfig, getMarkets } from "../data";
 import { demoOracle } from "../demo";
-import { listObservationTxs, readObservationTx, type ObservationTx } from "../proof";
+import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTx, type AttestationCheck, type ObservationTx } from "../proof";
 import { near, usd, utc } from "../format";
 import type { OracleOutput } from "../types";
 import { Card, TxLink, useAsync } from "../ui";
@@ -17,7 +17,7 @@ export function ProofPage() {
       const m = new Map<string, ObservationTx>();
       if (demo) {
         for (const [pid, v] of demoOracle(step))
-          m.set(pid, { hash: v.hash, signer: "", pendingId: pid, recorded: true, rejectReason: null, oracle: v.oracle, chargedYocto: v.charged });
+          m.set(pid, { hash: v.hash, signer: "", pendingId: pid, recorded: true, rejectReason: null, oracle: v.oracle, oracleRaw: null, chargedYocto: v.charged });
         return m;
       }
       const list = await listObservationTxs();
@@ -28,6 +28,21 @@ export function ProofPage() {
     [demo, step],
   );
   const rejected = txs.data ? [...txs.data.values()].filter((t) => !t.recorded) : [];
+  const atts = useAsync(
+    async (): Promise<Map<string, AttestationCheck | null>> => {
+      const out = new Map<string, AttestationCheck | null>();
+      if (demo || !markets.data || !txs.data) return out;
+      for (const m of markets.data) {
+        for (const o of m.observations) {
+          if (!o.outlayer_request) continue;
+          const t = txs.data.get(o.pending_id);
+          out.set(o.pending_id, await checkAttestation(o.outlayer_request, m.oracle_version_key, m.oracle_input, t?.oracleRaw ?? null).catch(() => null));
+        }
+      }
+      return out;
+    },
+    [markets.data, txs.data],
+  );
 
   return (
     <>
@@ -48,8 +63,17 @@ export function ProofPage() {
             promise can reach, for a request id it issued and has not used. It needs at least 3 sources, a price above 0 and below 10 ×
             cap, and the stated median must equal the median of the sources. Otherwise nothing is recorded.
           </li>
-          <li>After the period anyone can settle on the mean of the observations. There is no admin override.</li>
+          <li>
+            One price per time slot. After the period anyone can settle on the mean of the filled slots. There is no admin
+            override. Anyone can then roll the next market; its band is centred on the settled average.
+          </li>
         </ol>
+        <p className="small">
+          <strong>Attestation.</strong> For every price the table fetches OutLayer's attestation record (TDX quote, worker
+          measurement, hashes) and checks that its wasm hash is the market's pinned version, its input hash is the sha256 of
+          the market's oracle input, and its output hash is the sha256 of the exact bytes the contract received. The contract
+          itself trusts the OutLayer contract and the pinned version; it does not verify the TDX quote.
+        </p>
         {cfg.data && (
           <p className="small">
             Contract{" "}
@@ -82,6 +106,7 @@ export function ProofPage() {
                     <th>Tx</th>
                     <th>Per-source (USD/GPU-hr)</th>
                     <th>Fee</th>
+                    <th>Attestation</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -100,6 +125,9 @@ export function ProofPage() {
                         <td>{t ? <TxLink hash={t.hash} /> : txs.loading ? "…" : "not found"}</td>
                         <td className="small">{t?.oracle ? <Sources o={t.oracle} /> : "—"}</td>
                         <td className="small">{t?.chargedYocto ? `${near(BigInt(t.chargedYocto), 5)} NEAR` : "—"}</td>
+                        <td className="small">
+                          <AttCell c={atts.data?.get(o.pending_id)} loading={atts.loading} requestId={o.outlayer_request} />
+                        </td>
                       </tr>
                     );
                   })}
@@ -121,6 +149,22 @@ export function ProofPage() {
         </Card>
       )}
     </>
+  );
+}
+
+function AttCell({ c, loading, requestId }: { c: AttestationCheck | null | undefined; loading: boolean; requestId: string }) {
+  if (c === undefined) return <>{loading ? "…" : "—"}</>;
+  if (c === null) return <span className="muted">not found</span>;
+  const mark = (ok: boolean | null) => (ok === null ? "?" : ok ? "✓" : "✗");
+  return (
+    <a
+      href={`${OUTLAYER_API}/attestations/by-request/${requestId}`}
+      target="_blank"
+      rel="noreferrer"
+      title={`worker ${c.att.worker_measurement.slice(0, 16)}…, TDX quote ${c.att.tdx_quote.length} chars`}
+    >
+      wasm {mark(c.wasmMatches)} · input {mark(c.inputMatches)} · output {mark(c.outputMatches)}
+    </a>
   );
 }
 

@@ -4,7 +4,9 @@
 // only what the chain says.
 import { FLATRATE_ID, NEARBLOCKS_API } from "./config";
 import { txStatus } from "./near";
-import type { OracleOutput } from "./types";
+import type { Attestation, OracleOutput } from "./types";
+
+export const OUTLAYER_API = "https://testnet-api.outlayer.ai";
 
 export type ObservationTx = {
   hash: string;
@@ -13,6 +15,8 @@ export type ObservationTx = {
   recorded: boolean;
   rejectReason: string | null;
   oracle: OracleOutput | null;
+  /** The oracle's output exactly as OutLayer returned it to the contract (receipt bytes). */
+  oracleRaw: string | null;
   chargedYocto: string | null;
 };
 
@@ -41,11 +45,15 @@ export async function readObservationTx(hash: string, signer: string): Promise<O
   const rec = r.events.find((e) => e.event === "observation_recorded");
   const rej = r.events.find((e) => e.event === "observation_rejected");
   let oracle: OracleOutput | null = null;
+  let oracleRaw: string | null = null;
   for (const x of r.receipts) {
     if (x.executor === "outlayer.testnet" && x.value) {
       try {
         const j = JSON.parse(x.value);
-        if (j && Array.isArray(j.sources)) oracle = j;
+        if (j && Array.isArray(j.sources)) {
+          oracle = j;
+          oracleRaw = x.value;
+        }
       } catch {
         /* other outlayer receipts */
       }
@@ -59,6 +67,43 @@ export async function readObservationTx(hash: string, signer: string): Promise<O
     recorded: !!rec,
     rejectReason: (rej?.data.reason as string) ?? null,
     oracle,
+    oracleRaw,
     chargedYocto: charged,
+  };
+}
+
+export async function sha256Hex(text: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** OutLayer's attestation record for an execution, by its request id (public, CORS *). */
+export async function fetchAttestation(requestId: string): Promise<Attestation | null> {
+  const r = await fetch(`${OUTLAYER_API}/attestations/by-request/${encodeURIComponent(requestId)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export type AttestationCheck = {
+  att: Attestation;
+  wasmMatches: boolean;
+  inputMatches: boolean;
+  outputMatches: boolean | null; // null when the receipt bytes are not available
+};
+
+/** Compares the attestation with the market's pinned version and input, and with the bytes the contract received. */
+export async function checkAttestation(
+  requestId: string,
+  pinnedVersion: string,
+  oracleInput: string,
+  oracleRaw: string | null,
+): Promise<AttestationCheck | null> {
+  const att = await fetchAttestation(requestId);
+  if (!att) return null;
+  return {
+    att,
+    wasmMatches: att.wasm_hash === pinnedVersion && att.executed_wasm_sha256 === pinnedVersion,
+    inputMatches: att.input_hash === (await sha256Hex(oracleInput)),
+    outputMatches: oracleRaw === null ? null : att.output_hash === (await sha256Hex(oracleRaw)),
   };
 }

@@ -362,3 +362,17 @@ button:disabled {
   grid-column: 1 / -1;
   margin-top: 0;
 }
+.quotes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+.quote {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.quote h3 {
+  margin-top: 0;
+}

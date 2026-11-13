@@ -1,10 +1,15 @@
 //! Flatrate: GPU price claims settled on an OutLayer-attested median.
 //!
-//! Markets, the sealed commit-reveal opening auction, the claims ledger, observations through
-//! the OutLayer callback, settlement, redemption and the void path. Cover Notes (Phase 4)
-//! build on this file.
+//! Markets made from fixed templates, a sealed commit-reveal opening auction, a claims ledger,
+//! one price observation per time slot through the OutLayer callback, settlement on the mean
+//! of the filled slots, public market rolling, and Cover Note NFTs.
+//!
+//! The OutLayer fee for an observation is paid from the contract's own balance (the
+//! observation budget, which anyone can top up), so keepers need no deposit and can run on a
+//! function-call key.
 
 use flatrate_shared as math;
+use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
 use near_contract_standards::non_fungible_token::events::{NftBurn, NftMint};
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
@@ -12,14 +17,10 @@ use near_contract_standards::non_fungible_token::metadata::{
 use near_contract_standards::non_fungible_token::{
     NonFungibleToken, NonFungibleTokenEnumeration, NonFungibleTokenResolver, Token, TokenId,
 };
-use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde_json::{self, json};
-use near_sdk::store::{LookupMap, Vector};
-use near_sdk::{
-    env, near, require, AccountId, BorshStorageKey, Gas, GasWeight, NearToken, PanicOnDefault,
-    Promise, PromiseError, PromiseOrValue,
-};
+use near_sdk::store::LookupMap;
+use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 /// Gas for an fUSD `ft_transfer`.
 const GAS_FT_TRANSFER: Gas = Gas::from_tgas(10);
@@ -38,132 +39,30 @@ pub const MIN_SOURCES_OK: u8 = 3;
 pub const MAX_BIDS: u32 = 200;
 /// One whole claim in claim units (6 decimals, like fUSD).
 const CLAIM_UNITS: u128 = math::PAIR_MICROS as u128;
+/// NEAR kept back from the observation budget, on top of storage.
+const BUDGET_RESERVE: NearToken = NearToken::from_millinear(500);
+/// Market ids start here and Cover Note ids at `FIRST_NOTE_ID`, so they never repeat the ids
+/// used by the contract state this one replaced (markets 0-5, notes 0-2).
+const FIRST_MARKET_ID: u64 = 10;
+const FIRST_NOTE_ID: u64 = 1000;
+/// 10 cents in micro-USD: rolled bands are rounded down to this step.
+const TEN_CENTS: u64 = 100_000;
 
-#[derive(BorshStorageKey)]
-#[near]
-enum StorageKey {
-    Markets,
-    Claims,
-    Pending,
-    Bids,
-    BidIndex,
-    Refunds,
-    NftOwners,
-    NftMetadata,
-    NftEnumeration,
-    Notes,
-}
-
-/// Claims held inside a Cover Note NFT. They pay whoever owns the token at redemption.
-#[near(serializers = [borsh, json])]
-#[derive(Clone, Debug)]
-pub struct Note {
-    pub market_id: U64,
-    pub side: Side,
-    /// Claim units (6 decimals).
-    pub amount: U128,
-}
-
-/// `YYYY-MM-DD` (UTC) for a ns timestamp (Howard Hinnant's civil-from-days).
-fn utc_date(ns: u64) -> String {
-    let z = (ns / 1_000_000_000 / 86_400) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// Claim units as whole claims, without trailing zeros: 100_000_000 -> "100", 1_500_000 -> "1.5".
-fn claims_str(units: u128) -> String {
-    let whole = units / CLAIM_UNITS;
-    let frac = units % CLAIM_UNITS;
-    if frac == 0 {
-        whole.to_string()
-    } else {
-        let f = format!("{frac:06}");
-        format!("{whole}.{}", f.trim_end_matches('0'))
-    }
-}
-
-fn usd_str(micros: u64) -> String {
-    format!("${}.{:02}", micros / 1_000_000, (micros % 1_000_000) / 10_000)
-}
-
-/// A sealed bid. `hash = sha256(borsh(market_id: u64, side: Side, qty: u64, limit_cents: u8,
-/// salt: String))`; `qty` is whole claims; the escrow must cover `qty x limit_cents x 10_000`.
-#[near(serializers = [borsh])]
-#[derive(Clone, Debug)]
-pub struct Bid {
-    pub bidder: AccountId,
-    pub hash: [u8; 32],
-    pub escrow: u128,
-    pub committed_at: u64,
-    pub revealed: Option<RevealedBid>,
-    /// Set by `clear_auction`.
-    pub filled_qty: u64,
-    pub cost: u128,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone, Debug)]
-pub struct RevealedBid {
-    pub side: Side,
-    pub qty: U64,
-    pub limit_cents: u8,
-}
-
-#[near(serializers = [json])]
-#[derive(Clone, Debug)]
-pub struct BidView {
-    pub index: u32,
-    pub bidder: AccountId,
-    pub hash: String,
-    pub escrow: U128,
-    pub committed_at: U64,
-    pub revealed: Option<RevealedBid>,
-    pub filled_qty: U64,
-    pub cost: U128,
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0xf) as usize] as char);
-    }
-    s
-}
-
-fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
-    let b = s.as_bytes();
-    if b.len() != 64 {
-        return None;
-    }
-    let nib = |c: u8| match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    };
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = (nib(b[2 * i])? << 4) | nib(b[2 * i + 1])?;
-    }
-    Some(out)
-}
-
-/// The commitment for a bid. Exposed as a view (`bid_hash`) so clients can check their hashing.
-pub fn bid_commitment(market_id: u64, side: Side, qty: u64, limit_cents: u8, salt: &str) -> [u8; 32] {
-    let bytes = near_sdk::borsh::to_vec(&(market_id, side, qty, limit_cents, salt.to_string()))
-        .unwrap_or_else(|_| env::panic_str("ERR_BORSH"));
-    env::sha256_array(&bytes)
-}
+// Storage prefixes. Byte strings distinct from the previous state's enum prefixes, so a reset
+// in place never reads old data.
+const P_MARKETS: &[u8] = b"m2";
+const P_LATEST: &[u8] = b"l2";
+const P_OBS: &[u8] = b"o2";
+const P_SLOT_PENDING: &[u8] = b"s2";
+const P_CLAIMS: &[u8] = b"c2";
+const P_PENDING: &[u8] = b"p2";
+const P_BIDS: &[u8] = b"b2";
+const P_BID_INDEX: &[u8] = b"i2";
+const P_REFUNDS: &[u8] = b"r2";
+const P_NFT_OWNERS: &[u8] = b"n2o";
+const P_NFT_META: &[u8] = b"n2m";
+const P_NFT_ENUM: &[u8] = b"n2e";
+const P_NOTES: &[u8] = b"n2n";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -188,6 +87,26 @@ impl IndexId {
 }
 
 #[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum Template {
+    DEMO,
+    WEEKLY,
+}
+
+/// Lengths for markets made from a template. Stored at init; there is no setter.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct TemplateConfig {
+    pub commit_ns: U64,
+    pub reveal_ns: U64,
+    pub period_ns: U64,
+    pub slot_ns: U64,
+    pub min_filled_slots: u32,
+    pub void_after_ns: U64,
+}
+
+#[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarketStatus {
     Auction,
@@ -205,7 +124,7 @@ pub struct Observation {
     pub at: u64,
     /// OutLayer request id, as reported by the oracle component (`NEAR_REQUEST_ID`).
     pub outlayer_request: String,
-    /// This contract's pending id for the request (used, so it can never be replayed).
+    /// This contract's pending id for the request.
     pub pending_id: u64,
 }
 
@@ -213,6 +132,7 @@ pub struct Observation {
 #[derive(Clone, Debug)]
 pub struct Market {
     pub id: u64,
+    pub template: Template,
     pub index: IndexId,
     pub floor_micros: u64,
     pub cap_micros: u64,
@@ -220,10 +140,12 @@ pub struct Market {
     pub auction_reveal_end: u64,
     pub period_start: u64,
     pub period_end: u64,
-    pub min_observations: u32,
+    pub slot_ns: u64,
+    pub min_filled_slots: u32,
     pub void_after: u64,
     pub status: MarketStatus,
-    pub observations: Vec<Observation>,
+    pub filled_slots: u32,
+    pub settled_average_micros: Option<u64>,
     /// OutLayer project version pinned when the market was created. Never changes.
     pub oracle_version_key: String,
     /// JSON input sent to the oracle for this market. Never changes.
@@ -234,22 +156,34 @@ pub struct Market {
     pub pairs: u128,
     /// fUSD held for this market, micro-units.
     pub collateral: u128,
-    /// Sealed bids committed to the opening auction.
     pub bid_count: u32,
+    /// Account that created (owner, first market) or rolled the market.
+    pub created_by: AccountId,
+}
+
+impl Market {
+    pub fn num_slots(&self) -> u32 {
+        (self.period_end - self.period_start).div_ceil(self.slot_ns) as u32
+    }
+    /// The slot `now` falls in, if `now` is inside the period.
+    pub fn slot_at(&self, now: u64) -> Option<u32> {
+        (now >= self.period_start && now < self.period_end).then(|| ((now - self.period_start) / self.slot_ns) as u32)
+    }
 }
 
 #[near(serializers = [borsh])]
 #[derive(Clone, Debug)]
 pub struct PendingObservation {
     pub market_id: u64,
+    pub slot: u32,
     pub caller: AccountId,
-    pub deposit: NearToken,
     pub requested_at: u64,
 }
 
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
 pub struct ObservationView {
+    pub slot: u32,
     pub price_micros: U64,
     pub sources_ok: u8,
     pub at: U64,
@@ -261,6 +195,7 @@ pub struct ObservationView {
 #[derive(Clone, Debug)]
 pub struct MarketView {
     pub id: U64,
+    pub template: Template,
     pub index: IndexId,
     pub floor_micros: U64,
     pub cap_micros: U64,
@@ -268,9 +203,13 @@ pub struct MarketView {
     pub auction_reveal_end: U64,
     pub period_start: U64,
     pub period_end: U64,
-    pub min_observations: u32,
+    pub slot_ns: U64,
+    pub num_slots: u32,
+    pub min_filled_slots: u32,
     pub void_after: U64,
     pub status: MarketStatus,
+    pub filled_slots: u32,
+    pub settled_average_micros: Option<U64>,
     pub observations: Vec<ObservationView>,
     pub oracle_version_key: String,
     pub oracle_input: String,
@@ -278,41 +217,18 @@ pub struct MarketView {
     pub pairs: U128,
     pub collateral: U128,
     pub bid_count: u32,
+    pub created_by: AccountId,
 }
 
-impl From<&Market> for MarketView {
-    fn from(m: &Market) -> Self {
-        Self {
-            id: U64(m.id),
-            index: m.index,
-            floor_micros: U64(m.floor_micros),
-            cap_micros: U64(m.cap_micros),
-            auction_commit_end: U64(m.auction_commit_end),
-            auction_reveal_end: U64(m.auction_reveal_end),
-            period_start: U64(m.period_start),
-            period_end: U64(m.period_end),
-            min_observations: m.min_observations,
-            void_after: U64(m.void_after),
-            status: m.status.clone(),
-            observations: m
-                .observations
-                .iter()
-                .map(|o| ObservationView {
-                    price_micros: U64(o.price_micros),
-                    sources_ok: o.sources_ok,
-                    at: U64(o.at),
-                    outlayer_request: o.outlayer_request.clone(),
-                    pending_id: U64(o.pending_id),
-                })
-                .collect(),
-            oracle_version_key: m.oracle_version_key.clone(),
-            oracle_input: m.oracle_input.clone(),
-            opening_price_cents: m.opening_price_cents,
-            pairs: U128(m.pairs),
-            collateral: U128(m.collateral),
-            bid_count: m.bid_count,
-        }
-    }
+#[near(serializers = [json])]
+pub struct SlotInfo {
+    pub market_id: U64,
+    pub num_slots: u32,
+    /// Slot that `now` falls in (None outside the period).
+    pub current_slot: Option<u32>,
+    pub current_filled: bool,
+    pub current_pending: bool,
+    pub filled_slots: u32,
 }
 
 /// `max_instructions`, `max_memory_mb`, `max_execution_seconds` sent to OutLayer
@@ -334,8 +250,12 @@ pub struct ConfigView {
     pub oracle_version_key: String,
     pub oracle_sources: Vec<String>,
     pub resource_limits: ResourceLimits,
+    pub demo_template: TemplateConfig,
+    pub weekly_template: TemplateConfig,
+    pub observation_deposit: U128,
+    pub observation_budget: U128,
     pub next_pending_id: U64,
-    pub market_count: U64,
+    pub next_market_id: U64,
 }
 
 /// One source's result in the oracle output.
@@ -379,6 +299,132 @@ pub struct ClaimKey {
     pub account_id: AccountId,
 }
 
+/// A sealed bid. `hash = sha256(borsh(market_id: u64, side: Side, qty: u64, limit_cents: u8,
+/// salt: String))`; `qty` is whole claims; the escrow must cover `qty x limit_cents x 10_000`.
+#[near(serializers = [borsh])]
+#[derive(Clone, Debug)]
+pub struct Bid {
+    pub bidder: AccountId,
+    pub hash: [u8; 32],
+    pub escrow: u128,
+    pub committed_at: u64,
+    pub revealed: Option<RevealedBid>,
+    /// Set by `clear_auction`.
+    pub filled_qty: u64,
+    pub cost: u128,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct RevealedBid {
+    pub side: Side,
+    pub qty: U64,
+    pub limit_cents: u8,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct BidView {
+    pub index: u32,
+    pub bidder: AccountId,
+    pub hash: String,
+    pub escrow: U128,
+    pub committed_at: U64,
+    pub revealed: Option<RevealedBid>,
+    pub filled_qty: U64,
+    pub cost: U128,
+}
+
+/// Claims held inside a Cover Note NFT. They pay whoever owns the token at redemption.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct Note {
+    pub market_id: U64,
+    pub side: Side,
+    /// Claim units (6 decimals).
+    pub amount: U128,
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0xf) as usize] as char);
+    }
+    s
+}
+
+fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
+    let b = s.as_bytes();
+    if b.len() != 64 {
+        return None;
+    }
+    let nib = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = (nib(b[2 * i])? << 4) | nib(b[2 * i + 1])?;
+    }
+    Some(out)
+}
+
+/// The commitment for a bid. Exposed as a view (`bid_hash`) so clients can check their hashing.
+pub fn bid_commitment(market_id: u64, side: Side, qty: u64, limit_cents: u8, salt: &str) -> [u8; 32] {
+    let bytes = near_sdk::borsh::to_vec(&(market_id, side, qty, limit_cents, salt.to_string()))
+        .unwrap_or_else(|_| env::panic_str("ERR_BORSH"));
+    env::sha256_array(&bytes)
+}
+
+/// `YYYY-MM-DD` (UTC) for a ns timestamp (Howard Hinnant's civil-from-days).
+fn utc_date(ns: u64) -> String {
+    let z = (ns / 1_000_000_000 / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Claim units as whole claims, without trailing zeros: 100_000_000 -> "100", 1_500_000 -> "1.5".
+fn claims_str(units: u128) -> String {
+    let whole = units / CLAIM_UNITS;
+    let frac = units % CLAIM_UNITS;
+    if frac == 0 {
+        whole.to_string()
+    } else {
+        let f = format!("{frac:06}");
+        format!("{whole}.{}", f.trim_end_matches('0'))
+    }
+}
+
+fn usd_str(micros: u64) -> String {
+    format!("${}.{:02}", micros / 1_000_000, (micros % 1_000_000) / 10_000)
+}
+
+/// Band for a rolled market: centre x 0.6 and centre x 1.4, both rounded down to 10 cents.
+/// `None` if the result is not a valid band (floor 0 or cap <= floor).
+pub fn band_from_average(centre_micros: u64) -> Option<(u64, u64)> {
+    let floor = (centre_micros as u128 * 6 / 10) as u64 / TEN_CENTS * TEN_CENTS;
+    let cap = (centre_micros as u128 * 14 / 10) as u64 / TEN_CENTS * TEN_CENTS;
+    (floor > 0 && cap > floor).then_some((floor, cap))
+}
+
+fn emit(event: &str, data: serde_json::Value) {
+    env::log_str(&format!(
+        "EVENT_JSON:{}",
+        json!({"standard": "flatrate", "version": "2.0.0", "event": event, "data": [data]})
+    ));
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -386,11 +432,22 @@ pub struct Contract {
     fusd_id: AccountId,
     outlayer_id: AccountId,
     oracle_project_id: String,
-    /// Version pinned into markets created from now on.
+    /// Pinned for every market. Fixed at init: there is no setter.
     oracle_version_key: String,
     oracle_sources: Vec<String>,
     resource_limits: ResourceLimits,
-    markets: Vector<Market>,
+    demo_template: TemplateConfig,
+    weekly_template: TemplateConfig,
+    /// yoctoNEAR attached to each OutLayer request; OutLayer refunds the unused part to us.
+    observation_deposit: NearToken,
+    markets: LookupMap<u64, Market>,
+    next_market_id: u64,
+    /// Latest market id per template.
+    latest: LookupMap<Template, u64>,
+    /// (market_id, slot) -> the observation recorded for that slot.
+    observations: LookupMap<(u64, u32), Observation>,
+    /// (market_id, slot) -> pending id of the request in flight for that slot.
+    slot_pending: LookupMap<(u64, u32), u64>,
     claims: LookupMap<ClaimKey, u128>,
     pending: LookupMap<u64, PendingObservation>,
     next_pending_id: u64,
@@ -406,45 +463,10 @@ pub struct Contract {
     next_note_id: u64,
 }
 
-/// State layout before Phase 4 (deployed 2026-11-12), read once by `migrate`.
-#[near(serializers = [borsh])]
-struct ContractV2 {
-    owner_id: AccountId,
-    fusd_id: AccountId,
-    outlayer_id: AccountId,
-    oracle_project_id: String,
-    oracle_version_key: String,
-    oracle_sources: Vec<String>,
-    resource_limits: ResourceLimits,
-    markets: Vector<Market>,
-    claims: LookupMap<ClaimKey, u128>,
-    pending: LookupMap<u64, PendingObservation>,
-    next_pending_id: u64,
-    bids: LookupMap<(u64, u32), Bid>,
-    bid_index: LookupMap<(u64, AccountId, [u8; 32]), u32>,
-    refunds: LookupMap<AccountId, u128>,
-}
-
-fn new_tokens(owner_id: AccountId) -> NonFungibleToken {
-    NonFungibleToken::new(
-        StorageKey::NftOwners,
-        owner_id,
-        Some(StorageKey::NftMetadata),
-        Some(StorageKey::NftEnumeration),
-        None::<StorageKey>,
-    )
-}
-
-fn emit(event: &str, data: serde_json::Value) {
-    env::log_str(&format!(
-        "EVENT_JSON:{}",
-        json!({"standard": "flatrate", "version": "1.0.0", "event": event, "data": [data]})
-    ));
-}
-
 #[near]
 impl Contract {
     #[init]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         owner_id: AccountId,
         fusd_id: AccountId,
@@ -453,13 +475,22 @@ impl Contract {
         oracle_version_key: String,
         oracle_sources: Vec<String>,
         resource_limits: ResourceLimits,
+        demo_template: TemplateConfig,
+        weekly_template: TemplateConfig,
+        observation_deposit: U128,
     ) -> Self {
         require!(!oracle_version_key.is_empty(), "ERR_EMPTY_VERSION");
         require!(oracle_sources.len() >= MIN_SOURCES_OK as usize, "ERR_TOO_FEW_SOURCES");
+        require!(observation_deposit.0 > 0, "ERR_ZERO_DEPOSIT");
+        for t in [&demo_template, &weekly_template] {
+            require!(t.slot_ns.0 > 0 && t.period_ns.0 >= t.slot_ns.0 && t.commit_ns.0 > 0, "ERR_BAD_TEMPLATE");
+            require!(t.min_filled_slots >= 1, "ERR_BAD_TEMPLATE");
+            require!((t.min_filled_slots as u64) <= t.period_ns.0.div_ceil(t.slot_ns.0), "ERR_BAD_TEMPLATE");
+        }
         Self {
-            tokens: new_tokens(owner_id.clone()),
-            notes: LookupMap::new(StorageKey::Notes),
-            next_note_id: 0,
+            tokens: NonFungibleToken::new(P_NFT_OWNERS.to_vec(), owner_id.clone(), Some(P_NFT_META.to_vec()), Some(P_NFT_ENUM.to_vec()), None::<Vec<u8>>),
+            notes: LookupMap::new(P_NOTES),
+            next_note_id: FIRST_NOTE_ID,
             owner_id,
             fusd_id,
             outlayer_id,
@@ -467,106 +498,125 @@ impl Contract {
             oracle_version_key,
             oracle_sources,
             resource_limits,
-            markets: Vector::new(StorageKey::Markets),
-            claims: LookupMap::new(StorageKey::Claims),
-            pending: LookupMap::new(StorageKey::Pending),
+            demo_template,
+            weekly_template,
+            observation_deposit: NearToken::from_yoctonear(observation_deposit.0),
+            markets: LookupMap::new(P_MARKETS),
+            next_market_id: FIRST_MARKET_ID,
+            latest: LookupMap::new(P_LATEST),
+            observations: LookupMap::new(P_OBS),
+            slot_pending: LookupMap::new(P_SLOT_PENDING),
+            claims: LookupMap::new(P_CLAIMS),
+            pending: LookupMap::new(P_PENDING),
             next_pending_id: 0,
-            bids: LookupMap::new(StorageKey::Bids),
-            bid_index: LookupMap::new(StorageKey::BidIndex),
-            refunds: LookupMap::new(StorageKey::Refunds),
+            bids: LookupMap::new(P_BIDS),
+            bid_index: LookupMap::new(P_BID_INDEX),
+            refunds: LookupMap::new(P_REFUNDS),
         }
     }
 
-    /// One-time upgrade from the Phase 2 state layout: keeps every market, claim, bid and
-    /// refund and adds the empty Cover Note collections. Only the contract account can call it,
-    /// as part of a deploy with full-access keys (before the contract goes keyless).
+    /// Fresh start on an account that already holds an older Flatrate state: same arguments as
+    /// `new`, old state ignored (it stays in storage under other prefixes and is never read).
+    /// Only the contract account can call it, as the init call of a deploy.
     #[private]
     #[init(ignore_state)]
-    pub fn migrate() -> Self {
-        let old: ContractV2 = env::state_read().unwrap_or_else(|| env::panic_str("ERR_NO_STATE"));
-        Self {
-            tokens: new_tokens(old.owner_id.clone()),
-            notes: LookupMap::new(StorageKey::Notes),
-            next_note_id: 0,
-            owner_id: old.owner_id,
-            fusd_id: old.fusd_id,
-            outlayer_id: old.outlayer_id,
-            oracle_project_id: old.oracle_project_id,
-            oracle_version_key: old.oracle_version_key,
-            oracle_sources: old.oracle_sources,
-            resource_limits: old.resource_limits,
-            markets: old.markets,
-            claims: old.claims,
-            pending: old.pending,
-            next_pending_id: old.next_pending_id,
-            bids: old.bids,
-            bid_index: old.bid_index,
-            refunds: old.refunds,
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset(
+        owner_id: AccountId,
+        fusd_id: AccountId,
+        outlayer_id: AccountId,
+        oracle_project_id: String,
+        oracle_version_key: String,
+        oracle_sources: Vec<String>,
+        resource_limits: ResourceLimits,
+        demo_template: TemplateConfig,
+        weekly_template: TemplateConfig,
+        observation_deposit: U128,
+    ) -> Self {
+        Self::new(
+            owner_id, fusd_id, outlayer_id, oracle_project_id, oracle_version_key, oracle_sources, resource_limits,
+            demo_template, weekly_template, observation_deposit,
+        )
+    }
+
+    // ---------- markets ----------
+
+    fn template(&self, t: Template) -> &TemplateConfig {
+        match t {
+            Template::DEMO => &self.demo_template,
+            Template::WEEKLY => &self.weekly_template,
         }
     }
 
-    // ---------- owner ----------
-
-    fn assert_owner(&self) {
-        require!(env::predecessor_account_id() == self.owner_id, "ERR_NOT_OWNER");
-    }
-
-    /// Owner-only. Creates a market in `Auction` status. All times are ns since the epoch.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_market(
-        &mut self,
-        index: IndexId,
-        floor_micros: U64,
-        cap_micros: U64,
-        auction_commit_end: U64,
-        auction_reveal_end: U64,
-        period_start: U64,
-        period_end: U64,
-        min_observations: u32,
-        void_after: U64,
-    ) -> U64 {
-        self.assert_owner();
+    fn internal_new_market(&mut self, template: Template, floor: u64, cap: u64) -> u64 {
+        require!(floor > 0 && cap > floor, "ERR_BAD_BOUNDS");
+        let t = self.template(template).clone();
         let now = env::block_timestamp();
-        require!(floor_micros.0 > 0 && cap_micros.0 > floor_micros.0, "ERR_BAD_BOUNDS");
-        require!(now < auction_commit_end.0, "ERR_BAD_TIMES");
-        require!(auction_commit_end.0 <= auction_reveal_end.0, "ERR_BAD_TIMES");
-        require!(auction_reveal_end.0 <= period_start.0, "ERR_BAD_TIMES");
-        require!(period_start.0 < period_end.0, "ERR_BAD_TIMES");
-        require!(period_end.0 <= void_after.0, "ERR_BAD_TIMES");
-        require!(min_observations >= 1, "ERR_BAD_MIN_OBSERVATIONS");
-        let id = self.markets.len() as u64;
-        let oracle_input =
-            json!({"index": index.as_str(), "sources": self.oracle_sources}).to_string();
-        self.markets.push(Market {
+        let commit_end = now + t.commit_ns.0;
+        let reveal_end = commit_end + t.reveal_ns.0;
+        let period_end = reveal_end + t.period_ns.0;
+        let id = self.next_market_id;
+        self.next_market_id += 1;
+        let index = IndexId::H100_HOURLY;
+        let m = Market {
             id,
+            template,
             index,
-            floor_micros: floor_micros.0,
-            cap_micros: cap_micros.0,
-            auction_commit_end: auction_commit_end.0,
-            auction_reveal_end: auction_reveal_end.0,
-            period_start: period_start.0,
-            period_end: period_end.0,
-            min_observations,
-            void_after: void_after.0,
+            floor_micros: floor,
+            cap_micros: cap,
+            auction_commit_end: commit_end,
+            auction_reveal_end: reveal_end,
+            period_start: reveal_end,
+            period_end,
+            slot_ns: t.slot_ns.0,
+            min_filled_slots: t.min_filled_slots,
+            void_after: period_end + t.void_after_ns.0,
             status: MarketStatus::Auction,
-            observations: vec![],
+            filled_slots: 0,
+            settled_average_micros: None,
             oracle_version_key: self.oracle_version_key.clone(),
-            oracle_input,
+            oracle_input: json!({"index": index.as_str(), "sources": self.oracle_sources}).to_string(),
             opening_price_cents: None,
             pairs: 0,
             collateral: 0,
             bid_count: 0,
-        });
-        emit("market_created", json!({"market_id": U64(id)}));
-        U64(id)
+            created_by: env::predecessor_account_id(),
+        };
+        self.markets.insert(id, m);
+        self.latest.insert(template, id);
+        emit(
+            "market_created",
+            json!({"market_id": U64(id), "template": template, "floor_micros": U64(floor), "cap_micros": U64(cap),
+                   "created_by": env::predecessor_account_id()}),
+        );
+        id
     }
 
-    /// Owner-only. Sets the oracle version pinned into markets created after this call.
-    /// Markets that already exist keep their pinned version.
-    pub fn set_oracle_version(&mut self, version_key: String) {
-        self.assert_owner();
-        require!(!version_key.is_empty(), "ERR_EMPTY_VERSION");
-        self.oracle_version_key = version_key;
+    /// Owner only, once per template: opens the first market of `template` with a band set by
+    /// hand. Every later market of that template comes from `roll_market`.
+    pub fn create_market(&mut self, template: Template, floor_micros: U64, cap_micros: U64) -> U64 {
+        require!(env::predecessor_account_id() == self.owner_id, "ERR_NOT_OWNER");
+        require!(!self.latest.contains_key(&template), "ERR_ALREADY_CREATED");
+        U64(self.internal_new_market(template, floor_micros.0, cap_micros.0))
+    }
+
+    /// Anyone: opens the next market of `template` once the previous one is settled or void.
+    /// The band is centred on the previous settled average (x0.6 / x1.4, rounded down to 10
+    /// cents); after a void market the previous band is reused. Storage is paid by the contract.
+    pub fn roll_market(&mut self, template: Template) -> U64 {
+        let prev_id = self.latest.get(&template).copied().unwrap_or_else(|| env::panic_str("ERR_NO_PREVIOUS"));
+        let prev = self.market(prev_id);
+        let (floor, cap) = match prev.status {
+            MarketStatus::Settled { .. } => prev
+                .settled_average_micros
+                .and_then(band_from_average)
+                .unwrap_or((prev.floor_micros, prev.cap_micros)),
+            MarketStatus::Void => (prev.floor_micros, prev.cap_micros),
+            _ => env::panic_str("ERR_PREVIOUS_NOT_DONE"),
+        };
+        let id = self.internal_new_market(template, floor, cap);
+        emit("market_rolled", json!({"market_id": U64(id), "previous": U64(prev_id), "template": template}));
+        U64(id)
     }
 
     // ---------- sealed opening auction ----------
@@ -631,10 +681,7 @@ impl Contract {
         require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
         require!(env::block_timestamp() >= m.auction_reveal_end, "ERR_REVEAL_NOT_ENDED");
 
-        let mut bids: Vec<Bid> = (0..m.bid_count)
-            .map(|i| self.bids.get(&(market_id.0, i)).cloned().unwrap())
-            .collect();
-        // Revealed bids go to the clearing; `id` is the commit index.
+        let mut bids: Vec<Bid> = (0..m.bid_count).map(|i| self.bids.get(&(market_id.0, i)).cloned().unwrap()).collect();
         let revealed: Vec<math::AuctionBid> = bids
             .iter()
             .enumerate()
@@ -695,9 +742,7 @@ impl Contract {
         Promise::new(self.fusd_id.clone())
             .function_call(
                 "ft_transfer".to_string(),
-                json!({"receiver_id": account_id, "amount": U128(amount), "memo": "flatrate refund"})
-                    .to_string()
-                    .into_bytes(),
+                json!({"receiver_id": account_id, "amount": U128(amount), "memo": "flatrate refund"}).to_string().into_bytes(),
                 NearToken::from_yoctonear(1),
                 GAS_FT_TRANSFER,
             )
@@ -750,21 +795,14 @@ impl Contract {
 
     // ---------- claims ledger ----------
 
-    /// fUSD `ft_transfer_call` receiver. `msg`: `{"action":"mint_pair","market_id":"<id>"}`.
-    pub fn ft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        amount: U128,
-        msg: String,
-    ) -> PromiseOrValue<U128> {
+    /// fUSD `ft_transfer_call` receiver. `msg`: `{"action":"mint_pair","market_id":"<id>"}` or
+    /// `{"action":"commit_bid","market_id":"<id>","hash":"<64 hex>"}`.
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
         require!(env::predecessor_account_id() == self.fusd_id, "ERR_WRONG_TOKEN");
-        let parsed: TransferMsg =
-            serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("ERR_BAD_MSG"));
+        let parsed: TransferMsg = serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("ERR_BAD_MSG"));
         match parsed {
             TransferMsg::MintPair { market_id } => self.internal_mint_pair(market_id.0, &sender_id, amount.0),
-            TransferMsg::CommitBid { market_id, hash } => {
-                self.internal_commit_bid(market_id.0, &sender_id, amount.0, &hash)
-            }
+            TransferMsg::CommitBid { market_id, hash } => self.internal_commit_bid(market_id.0, &sender_id, amount.0, &hash),
         }
         PromiseOrValue::Value(U128(0))
     }
@@ -805,10 +843,7 @@ impl Contract {
         self.market(market_id.0);
         self.sub_claim(market_id.0, side, &sender, amount.0);
         self.add_claim(market_id.0, side, &receiver_id, amount.0);
-        emit(
-            "claim_transfer",
-            json!({"market_id": market_id, "side": side, "from": sender, "to": receiver_id, "amount": amount}),
-        );
+        emit("claim_transfer", json!({"market_id": market_id, "side": side, "from": sender, "to": receiver_id, "amount": amount}));
     }
 
     pub fn claim_balance_of(&self, account_id: AccountId, market_id: U64, side: Side) -> U128 {
@@ -817,24 +852,41 @@ impl Contract {
 
     // ---------- observations through OutLayer ----------
 
-    /// Anyone, during the market period. Attach the OutLayer deposit (see
-    /// `estimate_execution_cost` on the OutLayer contract) and 300 TGas.
+    /// NEAR available to pay OutLayer: the contract balance above storage and a reserve.
+    fn budget(&self) -> u128 {
+        let storage = env::storage_byte_cost().as_yoctonear() * env::storage_usage() as u128;
+        env::account_balance().as_yoctonear().saturating_sub(storage + BUDGET_RESERVE.as_yoctonear())
+    }
+
+    /// Anyone: adds the attached NEAR to the observation budget.
     #[payable]
+    pub fn fund_observations(&mut self) -> U128 {
+        let d = env::attached_deposit();
+        require!(!d.is_zero(), "ERR_NO_DEPOSIT");
+        emit("observations_funded", json!({"by": env::predecessor_account_id(), "amount": U128(d.as_yoctonear())}));
+        U128(self.budget())
+    }
+
+    /// Anyone, during the period, for the current slot if it has no price and no request in
+    /// flight. The contract pays OutLayer from the observation budget (no deposit needed) and
+    /// OutLayer refunds the unused part to the contract. Attach 300 TGas.
     pub fn request_observation(&mut self, market_id: U64) -> Promise {
         let m = self.market(market_id.0);
         require!(m.status == MarketStatus::Open, "ERR_MARKET_NOT_OPEN");
         let now = env::block_timestamp();
-        require!(now >= m.period_start && now < m.period_end, "ERR_OUTSIDE_PERIOD");
-        let deposit = env::attached_deposit();
-        require!(!deposit.is_zero(), "ERR_NO_DEPOSIT");
+        let slot = m.slot_at(now).unwrap_or_else(|| env::panic_str("ERR_NOT_IN_PERIOD"));
+        let key = (m.id, slot);
+        require!(!self.observations.contains_key(&key) && !self.slot_pending.contains_key(&key), "ERR_SLOT_FILLED");
+        require!(self.budget() >= self.observation_deposit.as_yoctonear(), "ERR_NO_BUDGET");
         let caller = env::predecessor_account_id();
         let pending_id = self.next_pending_id;
         self.next_pending_id += 1;
-        self.pending.insert(
-            pending_id,
-            PendingObservation { market_id: m.id, caller: caller.clone(), deposit, requested_at: now },
+        self.pending.insert(pending_id, PendingObservation { market_id: m.id, slot, caller: caller.clone(), requested_at: now });
+        self.slot_pending.insert(key, pending_id);
+        emit(
+            "observation_requested",
+            json!({"market_id": market_id, "slot": slot, "pending_id": U64(pending_id), "caller": caller}),
         );
-        emit("observation_requested", json!({"market_id": market_id, "pending_id": U64(pending_id), "caller": caller}));
 
         // request_execution(source, resource_limits, input_data, secrets_ref, response_format,
         //                   payer_account_id, params): near-outlayer contract/src/execution.rs:35-45
@@ -848,14 +900,14 @@ impl Contract {
             "input_data": m.oracle_input,
             "secrets_ref": null,
             "response_format": "Json",
-            "payer_account_id": caller,
+            "payer_account_id": env::current_account_id(),
             "params": null,
         });
         Promise::new(self.outlayer_id.clone())
             .function_call_weight(
                 "request_execution".to_string(),
                 args.to_string().into_bytes(),
-                deposit,
+                self.observation_deposit,
                 GAS_OUTLAYER_STATIC,
                 GasWeight(1),
             )
@@ -870,7 +922,8 @@ impl Contract {
     /// Callback for `request_observation`. Only this contract's own promise chain can record
     /// a price: an id that was already used fails with `ERR_UNKNOWN_REQUEST`, any caller other
     /// than this contract fails with `ERR_NOT_OUTLAYER`, and an id never issued fails with
-    /// `ERR_UNKNOWN_REQUEST`. See BLOCKERS.md B1.
+    /// `ERR_UNKNOWN_REQUEST` (BLOCKERS.md B1). The result goes into the slot recorded at request
+    /// time, even if it arrives after that slot ended. A rejected result frees the slot.
     pub fn on_observation(&mut self, market_id: U64, pending_id: U64) -> bool {
         let id = pending_id.0;
         if id < self.next_pending_id && !self.pending.contains_key(&id) {
@@ -882,45 +935,39 @@ impl Contract {
         let p = self.pending.remove(&id).unwrap_or_else(|| env::panic_str("ERR_UNKNOWN_REQUEST"));
         require!(p.market_id == market_id.0, "ERR_UNKNOWN_REQUEST");
         require!(env::promise_results_count() == 1, "ERR_UNKNOWN_REQUEST");
+        self.slot_pending.remove(&(p.market_id, p.slot));
 
         let raw = match env::promise_result_checked(0, MAX_ORACLE_OUTPUT) {
             Ok(bytes) => bytes,
-            Err(PromiseError::Failed) => {
-                // OutLayer refused the call at the door, so the deposit came back to us.
-                Promise::new(p.caller.clone()).transfer(p.deposit).detach();
-                return self.reject(market_id.0, id, "outlayer_call_failed");
-            }
-            Err(PromiseError::TooLong(_)) => return self.reject(market_id.0, id, "output_too_long"),
-            Err(_) => return self.reject(market_id.0, id, "outlayer_result_error"),
+            // OutLayer refused the call at the door; the deposit came back to this contract.
+            Err(PromiseError::Failed) => return self.reject(&p, id, "outlayer_call_failed"),
+            Err(PromiseError::TooLong(_)) => return self.reject(&p, id, "output_too_long"),
+            Err(_) => return self.reject(&p, id, "outlayer_result_error"),
         };
         let out: Option<OracleOutput> = match serde_json::from_slice(&raw) {
             Ok(v) => v,
-            Err(_) => return self.reject(market_id.0, id, "bad_output"),
+            Err(_) => return self.reject(&p, id, "bad_output"),
         };
-        let Some(out) = out else {
-            // Failed run or timeout: OutLayer returns null and refunds the payer itself.
-            return self.reject(market_id.0, id, "oracle_no_output");
-        };
+        // Failed run or timeout: OutLayer returns null and refunds the payer (this contract).
+        let Some(out) = out else { return self.reject(&p, id, "oracle_no_output") };
 
-        let mut m = self.market(market_id.0);
+        let mut m = self.market(p.market_id);
         if m.status != MarketStatus::Open {
-            return self.reject(market_id.0, id, "market_not_open");
+            return self.reject(&p, id, "market_not_open");
         }
         if out.index != m.index.as_str() {
-            return self.reject(market_id.0, id, "wrong_index");
+            return self.reject(&p, id, "wrong_index");
         }
         let ok: Vec<u64> = out.sources.iter().filter_map(|s| s.price_micros).collect();
         if ok.len() < MIN_SOURCES_OK as usize {
-            return self.reject(market_id.0, id, "too_few_sources");
+            return self.reject(&p, id, "too_few_sources");
         }
-        let Some(price) = out.price_micros else {
-            return self.reject(market_id.0, id, "no_price");
-        };
+        let Some(price) = out.price_micros else { return self.reject(&p, id, "no_price") };
         if price == 0 || price as u128 >= 10 * m.cap_micros as u128 {
-            return self.reject(market_id.0, id, "price_out_of_range");
+            return self.reject(&p, id, "price_out_of_range");
         }
         if math::median(&ok) != Some(price) {
-            return self.reject(market_id.0, id, "median_mismatch");
+            return self.reject(&p, id, "median_mismatch");
         }
         let obs = Observation {
             price_micros: price,
@@ -931,26 +978,27 @@ impl Contract {
         };
         emit(
             "observation_recorded",
-            json!({"market_id": market_id, "pending_id": pending_id, "price_micros": U64(price),
+            json!({"market_id": market_id, "slot": p.slot, "pending_id": pending_id, "price_micros": U64(price),
                    "sources_ok": obs.sources_ok, "outlayer_request": obs.outlayer_request}),
         );
-        m.observations.push(obs);
+        self.observations.insert((m.id, p.slot), obs);
+        m.filled_slots += 1;
         self.save(m);
         true
     }
 
-    fn reject(&mut self, market_id: u64, pending_id: u64, reason: &str) -> bool {
+    fn reject(&mut self, p: &PendingObservation, pending_id: u64, reason: &str) -> bool {
         emit(
             "observation_rejected",
-            json!({"market_id": U64(market_id), "pending_id": U64(pending_id), "reason": reason}),
+            json!({"market_id": U64(p.market_id), "slot": p.slot, "pending_id": U64(pending_id), "reason": reason}),
         );
         false
     }
 
     // ---------- settlement ----------
 
-    /// Anyone, after `period_end`. Settles on the mean of the observations if there are at
-    /// least `min_observations`; otherwise refuses until `void_after`, then voids. Final.
+    /// Anyone, after `period_end`. Settles on the mean of the filled slots if there are at least
+    /// `min_filled_slots`; otherwise refuses until `void_after`, then voids (0.50 per side). Final.
     pub fn settle(&mut self, market_id: U64) -> MarketStatus {
         let mut m = self.market(market_id.0);
         match m.status {
@@ -960,19 +1008,21 @@ impl Contract {
         }
         let now = env::block_timestamp();
         require!(now >= m.period_end, "ERR_PERIOD_NOT_ENDED");
-        if m.observations.len() >= m.min_observations as usize {
-            let prices: Vec<u64> = m.observations.iter().map(|o| o.price_micros).collect();
+        if m.filled_slots >= m.min_filled_slots {
+            let prices: Vec<u64> =
+                (0..m.num_slots()).filter_map(|s| self.observations.get(&(m.id, s)).map(|o| o.price_micros)).collect();
             let avg = math::mean(&prices).unwrap();
             let p = math::payoff(avg, m.floor_micros, m.cap_micros);
             m.status = MarketStatus::Settled { long_payout_micros: p.long_micros };
+            m.settled_average_micros = Some(avg);
             emit(
                 "market_settled",
                 json!({"market_id": market_id, "avg_micros": U64(avg), "long_payout_micros": U64(p.long_micros),
-                       "short_payout_micros": U64(p.short_micros), "observations": m.observations.len()}),
+                       "short_payout_micros": U64(p.short_micros), "filled_slots": prices.len()}),
             );
         } else if now >= m.void_after {
             m.status = MarketStatus::Void;
-            emit("market_void", json!({"market_id": market_id, "observations": m.observations.len()}));
+            emit("market_void", json!({"market_id": market_id, "filled_slots": m.filled_slots}));
         } else {
             env::panic_str("ERR_TOO_FEW_OBSERVATIONS");
         }
@@ -985,14 +1035,7 @@ impl Contract {
     pub fn redeem(&mut self, market_id: U64) -> U128 {
         let account_id = env::predecessor_account_id();
         let mut m = self.market(market_id.0);
-        let p = match m.status {
-            MarketStatus::Settled { long_payout_micros } => math::Payoff {
-                long_micros: long_payout_micros,
-                short_micros: math::PAIR_MICROS - long_payout_micros,
-            },
-            MarketStatus::Void => math::VOID_PAYOFF,
-            _ => env::panic_str("ERR_NOT_SETTLED"),
-        };
+        let p = Self::payoff_of(&m);
         let long = self.claim(market_id.0, Side::Long, &account_id);
         let short = self.claim(market_id.0, Side::Short, &account_id);
         require!(long > 0 || short > 0, "ERR_NOTHING_TO_REDEEM");
@@ -1009,6 +1052,16 @@ impl Contract {
             self.pay(account_id, market_id.0, amount, long, short, 0);
         }
         U128(amount)
+    }
+
+    fn payoff_of(m: &Market) -> math::Payoff {
+        match m.status {
+            MarketStatus::Settled { long_payout_micros } => {
+                math::Payoff { long_micros: long_payout_micros, short_micros: math::PAIR_MICROS - long_payout_micros }
+            }
+            MarketStatus::Void => math::VOID_PAYOFF,
+            _ => env::panic_str("ERR_NOT_SETTLED"),
+        }
     }
 
     /// Restores balances if an fUSD payout failed (for example, receiver not registered).
@@ -1054,9 +1107,8 @@ impl Contract {
             Side::Short => "Short",
         };
         let amt = claims_str(amount.0);
-        let period_end = utc_date(m.period_end);
         let metadata = TokenMetadata {
-            title: Some(format!("Cover Note #{token_id}: {amt} {side_str}, H100, period ending {period_end}")),
+            title: Some(format!("Cover Note #{token_id}: {amt} {side_str}, H100, period ending {}", utc_date(m.period_end))),
             description: Some(format!(
                 "Holds {amt} {side_str} claims of Flatrate market {} (H100 per GPU-hour, floor {}, cap {}). \
                  After settlement the holder redeems it for fUSD.",
@@ -1102,14 +1154,7 @@ impl Contract {
     pub fn redeem_note(&mut self, token_id: TokenId) -> U128 {
         let (owner, note) = self.note_for_owner(&token_id);
         let mut m = self.market(note.market_id.0);
-        let p = match m.status {
-            MarketStatus::Settled { long_payout_micros } => math::Payoff {
-                long_micros: long_payout_micros,
-                short_micros: math::PAIR_MICROS - long_payout_micros,
-            },
-            MarketStatus::Void => math::VOID_PAYOFF,
-            _ => env::panic_str("ERR_NOT_SETTLED"),
-        };
+        let p = Self::payoff_of(&m);
         let per_claim = match note.side {
             Side::Long => p.long_micros,
             Side::Short => p.short_micros,
@@ -1173,22 +1218,45 @@ impl Contract {
             oracle_version_key: self.oracle_version_key.clone(),
             oracle_sources: self.oracle_sources.clone(),
             resource_limits: self.resource_limits.clone(),
+            demo_template: self.demo_template.clone(),
+            weekly_template: self.weekly_template.clone(),
+            observation_deposit: U128(self.observation_deposit.as_yoctonear()),
+            observation_budget: U128(self.budget()),
             next_pending_id: U64(self.next_pending_id),
-            market_count: U64(self.markets.len() as u64),
+            next_market_id: U64(self.next_market_id),
         }
     }
 
     pub fn get_market(&self, market_id: U64) -> Option<MarketView> {
-        self.markets.get(market_id.0 as u32).map(MarketView::from)
+        self.markets.get(&market_id.0).map(|m| self.view_of(m))
     }
 
+    /// Markets by id, starting at `from_index` (default: the first market id).
     pub fn list_markets(&self, from_index: Option<U64>, limit: Option<u32>) -> Vec<MarketView> {
-        let from = from_index.map(|v| v.0).unwrap_or(0) as u32;
-        let limit = limit.unwrap_or(50).min(100);
-        (from..self.markets.len())
-            .take(limit as usize)
-            .filter_map(|i| self.markets.get(i).map(MarketView::from))
-            .collect()
+        let from = from_index.map(|v| v.0).unwrap_or(FIRST_MARKET_ID).max(FIRST_MARKET_ID);
+        let limit = limit.unwrap_or(50).min(100) as u64;
+        (from..self.next_market_id).take(limit as usize).filter_map(|i| self.markets.get(&i).map(|m| self.view_of(m))).collect()
+    }
+
+    pub fn latest_market(&self, template: Template) -> Option<U64> {
+        self.latest.get(&template).map(|id| U64(*id))
+    }
+
+    pub fn slot_info(&self, market_id: U64) -> SlotInfo {
+        let m = self.market(market_id.0);
+        let cur = m.slot_at(env::block_timestamp());
+        SlotInfo {
+            market_id,
+            num_slots: m.num_slots(),
+            current_slot: cur,
+            current_filled: cur.is_some_and(|s| self.observations.contains_key(&(m.id, s))),
+            current_pending: cur.is_some_and(|s| self.slot_pending.contains_key(&(m.id, s))),
+            filled_slots: m.filled_slots,
+        }
+    }
+
+    pub fn observation_budget(&self) -> U128 {
+        U128(self.budget())
     }
 
     pub fn is_pending(&self, pending_id: U64) -> bool {
@@ -1197,16 +1265,53 @@ impl Contract {
 
     // ---------- internal ----------
 
+    fn view_of(&self, m: &Market) -> MarketView {
+        let observations = (0..m.num_slots())
+            .filter_map(|s| {
+                self.observations.get(&(m.id, s)).map(|o| ObservationView {
+                    slot: s,
+                    price_micros: U64(o.price_micros),
+                    sources_ok: o.sources_ok,
+                    at: U64(o.at),
+                    outlayer_request: o.outlayer_request.clone(),
+                    pending_id: U64(o.pending_id),
+                })
+            })
+            .collect();
+        MarketView {
+            id: U64(m.id),
+            template: m.template,
+            index: m.index,
+            floor_micros: U64(m.floor_micros),
+            cap_micros: U64(m.cap_micros),
+            auction_commit_end: U64(m.auction_commit_end),
+            auction_reveal_end: U64(m.auction_reveal_end),
+            period_start: U64(m.period_start),
+            period_end: U64(m.period_end),
+            slot_ns: U64(m.slot_ns),
+            num_slots: m.num_slots(),
+            min_filled_slots: m.min_filled_slots,
+            void_after: U64(m.void_after),
+            status: m.status.clone(),
+            filled_slots: m.filled_slots,
+            settled_average_micros: m.settled_average_micros.map(U64),
+            observations,
+            oracle_version_key: m.oracle_version_key.clone(),
+            oracle_input: m.oracle_input.clone(),
+            opening_price_cents: m.opening_price_cents,
+            pairs: U128(m.pairs),
+            collateral: U128(m.collateral),
+            bid_count: m.bid_count,
+            created_by: m.created_by.clone(),
+        }
+    }
+
     fn market(&self, id: u64) -> Market {
-        self.markets
-            .get(u32::try_from(id).unwrap_or(u32::MAX))
-            .cloned()
-            .unwrap_or_else(|| env::panic_str("ERR_NO_MARKET"))
+        self.markets.get(&id).cloned().unwrap_or_else(|| env::panic_str("ERR_NO_MARKET"))
     }
 
     fn save(&mut self, m: Market) {
-        let i = m.id as u32;
-        self.markets.replace(i, m);
+        self.markets.insert(m.id, m);
     }
 
     fn key(market_id: u64, side: Side, account_id: &AccountId) -> ClaimKey {
@@ -1241,21 +1346,11 @@ impl Contract {
     }
 
     /// Sends `amount` fUSD; restores the given balances if the transfer fails.
-    fn pay(
-        &self,
-        account_id: AccountId,
-        market_id: u64,
-        amount: u128,
-        restore_long: u128,
-        restore_short: u128,
-        restore_pairs: u128,
-    ) {
+    fn pay(&self, account_id: AccountId, market_id: u64, amount: u128, restore_long: u128, restore_short: u128, restore_pairs: u128) {
         Promise::new(self.fusd_id.clone())
             .function_call(
                 "ft_transfer".to_string(),
-                json!({"receiver_id": account_id, "amount": U128(amount), "memo": "flatrate"})
-                    .to_string()
-                    .into_bytes(),
+                json!({"receiver_id": account_id, "amount": U128(amount), "memo": "flatrate"}).to_string().into_bytes(),
                 NearToken::from_yoctonear(1),
                 GAS_FT_TRANSFER,
             )
@@ -1371,6 +1466,16 @@ mod tests {
         assert_eq!(claims_str(1), "0.000001");
         assert_eq!(usd_str(2_400_000), "$2.40");
         assert_eq!(usd_str(5_605_000), "$5.60");
+    }
+
+    #[test]
+    fn band_rule() {
+        // 3.98 x 0.6 = 2.388 -> 2.30 and 3.98 x 1.4 = 5.572 -> 5.50 (both rounded down to 10 cents)
+        assert_eq!(band_from_average(3_980_000), Some((2_300_000, 5_500_000)));
+        assert_eq!(band_from_average(4_000_000), Some((2_400_000, 5_600_000)));
+        // too small to make a band
+        assert_eq!(band_from_average(100_000), None);
+        assert_eq!(band_from_average(0), None);
     }
 
     #[test]

@@ -1,9 +1,9 @@
 import { useRef, useState } from "react";
 import { href, useApp } from "../App";
 import { PriceChart } from "../Chart";
-import { ONE, OUTLAYER_ID } from "../config";
-import { getBids, getConfig, getMarket } from "../data";
-import { bidHash, callFlat, flat, randomSalt, transferCall, view, type Guest } from "../near";
+import { ONE } from "../config";
+import { getBids, getMarket, getSlotInfo } from "../data";
+import { bidHash, callFlat, flat, randomSalt, transferCall, type Guest } from "../near";
 import { longPayout, parseUnits, phase, shortAcct, statusLabel, timeLeft, units, usd, utc } from "../format";
 import type { Market, Side } from "../types";
 import { Card, Field, useAction, useAsync, useTick } from "../ui";
@@ -66,7 +66,7 @@ export function MarketPage({ id }: { id: string }) {
         <a href={href("/")}>← Markets</a>
       </p>
       <Card
-        title={`Market ${mk.id}: H100 per GPU-hour`}
+        title={`Market ${mk.id} (${mk.template}): H100 per GPU-hour`}
         right={<span className={`pill pill-${statusLabel(mk.status).toLowerCase()}`}>{statusLabel(mk.status)}</span>}
       >
         <div className="grid4">
@@ -77,16 +77,21 @@ export function MarketPage({ id }: { id: string }) {
           <Stat k="Commits close" v={utc(mk.auction_commit_end)} />
           <Stat k="Reveals close" v={utc(mk.auction_reveal_end)} />
           <Stat k="Period" v={`${utc(mk.period_start)} → ${utc(mk.period_end)}`} />
-          <Stat k="Observations" v={`${mk.observations.length} (min ${mk.min_observations}), void after ${utc(mk.void_after)}`} />
+          <Stat
+            k="Time slots"
+            v={`${mk.filled_slots} of ${mk.num_slots} filled (need ${mk.min_filled_slots}), ${Number(BigInt(mk.slot_ns) / 60_000_000_000n)} min each; void after ${utc(mk.void_after)}`}
+          />
         </div>
         {lp !== null && (
           <p>
+            {mk.settled_average_micros && <>Settled average {usd(mk.settled_average_micros, 4)} · </>}
             <strong>Payout per claim:</strong> Long {usd(lp, 6)} · Short {usd(1_000_000 - lp, 6)}
             {mk.status === "Void" && " (void: too few observations)"}
           </p>
         )}
         <p className="muted small">
-          Oracle version (wasm sha256) pinned for this market: <span className="mono break">{mk.oracle_version_key}</span>
+          Oracle version (wasm sha256) pinned for this market: <span className="mono break">{mk.oracle_version_key}</span> ·
+          created by <span className="mono">{shortAcct(mk.created_by)}</span>
         </p>
       </Card>
 
@@ -277,18 +282,15 @@ function PositionCard({
   const ok = !!amt && amt > 0n && !demo;
   const settledish = mk.status !== "Auction" && mk.status !== "Open";
 
+  const slot = useAsync(() => getSlotInfo(demo, mk.id), [demo, mk.id, mk.filled_slots], demo ? undefined : 10000);
   const requestObservation = () =>
-    act.run(async () => {
-      const cfg = await getConfig(false);
-      const limits = {
-        max_instructions: Number(cfg.resource_limits.max_instructions),
-        max_memory_mb: cfg.resource_limits.max_memory_mb,
-        max_execution_seconds: Number(cfg.resource_limits.max_execution_seconds),
-      };
-      const est = BigInt(await view<string>(OUTLAYER_ID, "estimate_execution_cost", { resource_limits: limits, input_len: mk.oracle_input.length }));
-      // OutLayer refunds whatever it does not use to the caller.
-      return callFlat(guest, "request_observation", { market_id: mk.id }, { gasTgas: 300, deposit: est + 10n ** 21n });
-    }, onDone);
+    // No deposit: the contract pays OutLayer from its observation budget.
+    act.run(() => callFlat(guest, "request_observation", { market_id: mk.id }, { gasTgas: 300 }), () => {
+      onDone();
+      slot.reload();
+    });
+  const s = slot.data;
+  const slotFree = !!s && s.current_slot !== null && !s.current_filled && !s.current_pending;
 
   return (
     <Card title="Your position">
@@ -345,10 +347,15 @@ function PositionCard({
             </div>
           </div>
           <div className="row">
-            <button disabled={demo || act.busy || ph !== "period"} onClick={requestObservation}>
-              Request a price observation
+            <button disabled={demo || act.busy || ph !== "period" || !slotFree} onClick={requestObservation}>
+              Request the price for this slot
             </button>
-            <small className="muted">Anyone can do this during the period; you pay OutLayer's fee (about 0.002 testnet NEAR, unused part refunded).</small>
+            <small className="muted">
+              {s && s.current_slot !== null
+                ? `Slot ${s.current_slot + 1} of ${s.num_slots}: ${s.current_filled ? "price recorded" : s.current_pending ? "request in flight" : "no price yet"}. `
+                : ""}
+              One price per slot; anyone can ask. The contract pays OutLayer's fee from its budget.
+            </small>
           </div>
         </>
       )}
@@ -364,6 +371,17 @@ function PositionCard({
         </div>
       )}
 
+      {settledish && (
+        <div className="row">
+          <button
+            disabled={demo || act.busy}
+            onClick={() => act.run(() => callFlat(guest, "roll_market", { template: mk.template }, { gasTgas: 50 }), onDone)}
+          >
+            Roll the next {mk.template} market
+          </button>
+          <small className="muted">Anyone can, once the latest {mk.template} market is settled or void. Its band is centred on this market's average.</small>
+        </div>
+      )}
       {settledish && mine && (BigInt(mine.long) > 0n || BigInt(mine.short) > 0n) && (
         <button disabled={demo || act.busy} onClick={() => act.run(() => callFlat(guest, "redeem", { market_id: mk.id }), onDone)}>
           Redeem claims for fUSD

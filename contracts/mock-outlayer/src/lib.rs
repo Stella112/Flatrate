@@ -2,11 +2,13 @@
 //!
 //! Stands in for `outlayer.testnet` `request_execution`. The real contract pauses with
 //! yield/resume and later returns the module's stdout JSON as the promise value (or `null`
-//! on a failed run). This mock returns a value set by the test straight away, so the caller's
-//! callback sees the same shape (near-outlayer `contract/src/execution.rs:893-916`).
+//! on a failed run). In `Respond`/`Null` mode this mock returns a value set by the test straight
+//! away; in `Hold` mode it pauses with the same yield/resume mechanism and the test resumes it
+//! later with `mock_resume`, so a request can be pending across time slots
+//! (near-outlayer `contract/src/execution.rs:893-916`).
 
 use near_sdk::serde_json::Value;
-use near_sdk::{env, near, AccountId, PanicOnDefault};
+use near_sdk::{env, near, AccountId, Gas, GasWeight, PanicOnDefault, PromiseError};
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,6 +19,8 @@ pub enum MockMode {
     Null,
     /// Panic, like `request_execution` refusing the call at the door.
     Panic,
+    /// Pause with yield/resume until `mock_resume` is called.
+    Hold,
 }
 
 #[near(contract_state)]
@@ -26,13 +30,15 @@ pub struct MockOutlayer {
     next_output: String,
     calls: u64,
     last_args: String,
+    /// data id of the held (yielded) request, if any.
+    held: Option<Vec<u8>>,
 }
 
 #[near]
 impl MockOutlayer {
     #[init]
     pub fn new() -> Self {
-        Self { mode: MockMode::Null, next_output: "null".into(), calls: 0, last_args: String::new() }
+        Self { mode: MockMode::Null, next_output: "null".into(), calls: 0, last_args: String::new(), held: None }
     }
 
     /// Test control: what the next `request_execution` returns.
@@ -65,11 +71,34 @@ impl MockOutlayer {
             "payer_account_id": payer_account_id, "params": params,
         })
         .to_string();
+        if self.mode == MockMode::Hold {
+            let idx = env::promise_yield_create("mock_on_resume", b"{}", Gas::from_tgas(10), GasWeight(0), 0);
+            self.held = Some(env::read_register(0).expect("mock: yield id"));
+            env::promise_return(idx);
+            return;
+        }
         let out = match self.mode {
             MockMode::Respond => self.next_output.clone(),
             _ => "null".to_string(),
         };
         env::value_return(out.as_bytes());
+    }
+
+    /// Test control: resume the held request with this output (OutLayer's resolve step).
+    pub fn mock_resume(&mut self, output: Option<String>) -> bool {
+        let id = self.held.take().expect("mock: nothing held");
+        let id: [u8; 32] = id.try_into().expect("mock: bad yield id");
+        env::promise_yield_resume(&id, output.unwrap_or_else(|| "null".into()).as_bytes())
+    }
+
+    /// Yield callback: passes the resumed payload through as the promise value.
+    #[private]
+    pub fn mock_on_resume(&mut self) {
+        // Raw bytes, not JSON-decoded: the payload is the oracle output (or `null` on a timeout).
+        match env::promise_result_checked(0, 65_536) {
+            Ok(bytes) => env::value_return(&bytes),
+            Err(PromiseError::Failed) | Err(_) => env::value_return(b"null"),
+        }
     }
 
     pub fn mock_calls(&self) -> u64 {

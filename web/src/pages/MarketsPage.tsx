@@ -15,7 +15,9 @@ export function MarketsPage() {
           Each market tracks the H100 price per GPU-hour. A <strong>Long</strong> claim pays more when the price rises (for buyers of
           compute), a <strong>Short</strong> claim pays more when it falls (for sellers). One fUSD backs one Long plus one Short. At
           settlement Long pays <span className="mono">clamp((avg − floor) / (cap − floor), 0, 1)</span> fUSD and Short pays the rest.
-          Prices come from five public GPU price APIs, fetched inside an OutLayer enclave; the median is posted on-chain.
+          Prices come from five public GPU price APIs, fetched inside an OutLayer enclave; the median is posted on-chain,
+          at most one price per time slot. When a market ends, anyone can roll the next one; its band is centred on the
+          settled average.
         </p>
         <p className="muted">Testnet only. fUSD is a test token with a public faucet.</p>
       </Card>
@@ -28,11 +30,12 @@ export function MarketsPage() {
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>Template</th>
                   <th>Status</th>
                   <th>Floor</th>
                   <th>Cap</th>
                   <th>Latest median</th>
-                  <th>Obs.</th>
+                  <th>Slots filled</th>
                   <th>Next</th>
                 </tr>
               </thead>
@@ -46,6 +49,7 @@ export function MarketsPage() {
                       <td>
                         <a href={href(`/market/${m.id}`)}>{m.id}</a>
                       </td>
+                      <td>{m.template}</td>
                       <td>
                         <span className={`pill pill-${statusLabel(m.status).toLowerCase()}`}>{statusLabel(m.status)}</span>
                         {lp !== null && <small className="muted"> Long {usd(lp, 4)}</small>}
@@ -54,7 +58,7 @@ export function MarketsPage() {
                       <td>{usd(m.cap_micros)}</td>
                       <td>{last ? usd(last.price_micros, 3) : "—"}</td>
                       <td>
-                        {m.observations.length}/{m.min_observations}
+                        {m.filled_slots}/{m.num_slots} (need {m.min_filled_slots})
                       </td>
                       <td>{nd && !demo ? `${nd.label} in ${timeLeft(nd.ns)}` : "—"}</td>
                     </tr>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useApp } from "./App";
 import { FLATRATE_ID } from "./config";
 import { callFlat, flat, view, type TxResult } from "./near";
-import type { Market, NftToken } from "./types";
+import type { Market, NftToken, SlotInfo } from "./types";
 import { Card, TxLink } from "./ui";
 
 type Attack = {
@@ -15,7 +15,7 @@ type Attack = {
 };
 
 async function markets(): Promise<Market[]> {
-  return flat<Market[]>("list_markets", { from_index: "0", limit: 100 });
+  return flat<Market[]>("list_markets", { limit: 100 });
 }
 
 const ATTACKS: Attack[] = [
@@ -43,15 +43,19 @@ const ATTACKS: Attack[] = [
     },
   },
   {
-    key: "replay",
-    title: "Replay",
-    what: "Call on_observation again with the request id of an observation that was already recorded.",
-    expected: "ERR_UNKNOWN_REQUEST",
+    key: "slot",
+    title: "Second price in the same slot",
+    what: "Call request_observation for the current time slot of a market that already has a price (or a request) for it.",
+    expected: "ERR_SLOT_FILLED",
     prepare: async () => {
-      const m = (await markets()).find((x) => x.observations.length > 0);
-      if (!m) return { unavailable: "No observation has been recorded yet." };
-      const o = m.observations[0];
-      return { method: "on_observation", args: { market_id: m.id, pending_id: o.pending_id }, target: `market ${m.id}, used pending id ${o.pending_id}` };
+      for (const m of await markets()) {
+        if (m.status !== "Open") continue;
+        const s = await flat<SlotInfo>("slot_info", { market_id: m.id });
+        if (s.current_slot !== null && (s.current_filled || s.current_pending)) {
+          return { method: "request_observation", args: { market_id: m.id }, target: `market ${m.id}, slot ${s.current_slot + 1} (already ${s.current_filled ? "filled" : "requested"})` };
+        }
+      }
+      return { unavailable: "No open market has a price for its current slot right now. The keeper fills each slot early; try again in a minute." };
     },
   },
   {
@@ -78,7 +82,7 @@ export function AttackPanel() {
       </p>
       <div className="attacks">
         {ATTACKS.map((a) => (
-          <AttackRow key={a.key} a={a} guest={guest.accountId} disabled={demo} run={(method, args) => callFlat(guest, method, args, { gasTgas: 50 })} />
+          <AttackRow key={a.key} a={a} guest={guest.accountId} disabled={demo} run={(method, args) => callFlat(guest, method, args, { gasTgas: method === "request_observation" ? 300 : 50 })} />
         ))}
       </div>
       {demo && <p className="muted small">Disabled in scripted demo mode.</p>}
