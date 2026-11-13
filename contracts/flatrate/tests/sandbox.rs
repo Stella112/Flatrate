@@ -1217,3 +1217,43 @@ async fn scripted_demo_replays_market_2() -> anyhow::Result<()> {
     println!("SCRIPTED DEMO PASS: sandbox replay equals testnet market 2");
     Ok(())
 }
+
+/// Extra 2: the same contract deployed for another index. The index is fixed at init, goes into
+/// every market's oracle input, and defaults to H100_HOURLY when the init omits it.
+#[tokio::test]
+async fn index_is_fixed_at_init_and_defaults_to_h100() -> anyhow::Result<()> {
+    let e = setup().await?;
+    let cfg: Value = e.flat.view("get_config").await?.json()?;
+    assert_eq!(cfg["index"], "H100_HOURLY");
+
+    let tokens = e
+        .worker
+        .root_account()?
+        .create_subaccount("tokens")
+        .initial_balance(NearToken::from_near(30))
+        .transact()
+        .await?
+        .into_result()?
+        .deploy(&wasm("flatrate"))
+        .await?
+        .into_result()?;
+    let mut args = init_args(&e.owner, &e.fusd, e.mock.id().as_str(), DEMO, WEEKLY);
+    args["index"] = json!("TOKEN_PRICE");
+    args["oracle_sources"] = json!(["deepinfra", "parasail", "groq", "sambanova", "coreweave"]);
+    tokens.call("new").args_json(args).transact().await?.into_result()?;
+    let cfg: Value = tokens.view("get_config").await?.json()?;
+    assert_eq!(cfg["index"], "TOKEN_PRICE");
+
+    e.owner
+        .call(tokens.id(), "create_market")
+        .args_json(json!({"template": "DEMO", "floor_micros": "400000", "cap_micros": "1000000"}))
+        .transact()
+        .await?
+        .into_result()?;
+    let m: Value = tokens.view("get_market").args_json(json!({"market_id": "10"})).await?.json()?;
+    assert_eq!(m["index"], "TOKEN_PRICE");
+    let input: Value = serde_json::from_str(m["oracle_input"].as_str().unwrap())?;
+    assert_eq!(input["index"], "TOKEN_PRICE");
+    assert_eq!(input["sources"][2], "groq");
+    Ok(())
+}

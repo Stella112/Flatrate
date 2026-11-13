@@ -75,13 +75,24 @@ pub enum Side {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 pub enum IndexId {
+    /// H100 on-demand price, micro-USD per GPU-hour.
     H100_HOURLY,
+    /// LLM inference price (extra 2), micro-USD per 1M output tokens.
+    TOKEN_PRICE,
 }
 
 impl IndexId {
     pub fn as_str(&self) -> &'static str {
         match self {
             IndexId::H100_HOURLY => "H100_HOURLY",
+            IndexId::TOKEN_PRICE => "TOKEN_PRICE",
+        }
+    }
+    /// Short name and unit, for Cover Note metadata.
+    fn label(&self) -> (&'static str, &'static str) {
+        match self {
+            IndexId::H100_HOURLY => ("H100", "H100 per GPU-hour"),
+            IndexId::TOKEN_PRICE => ("LLM tokens", "USD per 1M output tokens"),
         }
     }
 }
@@ -253,6 +264,7 @@ pub struct ConfigView {
     pub demo_template: TemplateConfig,
     pub weekly_template: TemplateConfig,
     pub observation_deposit: U128,
+    pub index: IndexId,
     pub observation_budget: U128,
     pub next_pending_id: U64,
     pub next_market_id: U64,
@@ -440,6 +452,8 @@ pub struct Contract {
     weekly_template: TemplateConfig,
     /// yoctoNEAR attached to each OutLayer request; OutLayer refunds the unused part to us.
     observation_deposit: NearToken,
+    /// The index every market of this contract tracks. Fixed at init.
+    index: IndexId,
     markets: LookupMap<u64, Market>,
     next_market_id: u64,
     /// Latest market id per template.
@@ -478,6 +492,7 @@ impl Contract {
         demo_template: TemplateConfig,
         weekly_template: TemplateConfig,
         observation_deposit: U128,
+        index: Option<IndexId>,
     ) -> Self {
         require!(!oracle_version_key.is_empty(), "ERR_EMPTY_VERSION");
         require!(oracle_sources.len() >= MIN_SOURCES_OK as usize, "ERR_TOO_FEW_SOURCES");
@@ -501,6 +516,7 @@ impl Contract {
             demo_template,
             weekly_template,
             observation_deposit: NearToken::from_yoctonear(observation_deposit.0),
+            index: index.unwrap_or(IndexId::H100_HOURLY),
             markets: LookupMap::new(P_MARKETS),
             next_market_id: FIRST_MARKET_ID,
             latest: LookupMap::new(P_LATEST),
@@ -532,10 +548,11 @@ impl Contract {
         demo_template: TemplateConfig,
         weekly_template: TemplateConfig,
         observation_deposit: U128,
+        index: Option<IndexId>,
     ) -> Self {
         Self::new(
             owner_id, fusd_id, outlayer_id, oracle_project_id, oracle_version_key, oracle_sources, resource_limits,
-            demo_template, weekly_template, observation_deposit,
+            demo_template, weekly_template, observation_deposit, index,
         )
     }
 
@@ -557,7 +574,7 @@ impl Contract {
         let period_end = reveal_end + t.period_ns.0;
         let id = self.next_market_id;
         self.next_market_id += 1;
-        let index = IndexId::H100_HOURLY;
+        let index = self.index;
         let m = Market {
             id,
             template,
@@ -1107,10 +1124,11 @@ impl Contract {
             Side::Short => "Short",
         };
         let amt = claims_str(amount.0);
+        let (short_name, unit) = m.index.label();
         let metadata = TokenMetadata {
-            title: Some(format!("Cover Note #{token_id}: {amt} {side_str}, H100, period ending {}", utc_date(m.period_end))),
+            title: Some(format!("Cover Note #{token_id}: {amt} {side_str}, {short_name}, period ending {}", utc_date(m.period_end))),
             description: Some(format!(
-                "Holds {amt} {side_str} claims of Flatrate market {} (H100 per GPU-hour, floor {}, cap {}). \
+                "Holds {amt} {side_str} claims of Flatrate market {} ({unit}, floor {}, cap {}). \
                  After settlement the holder redeems it for fUSD.",
                 m.id,
                 usd_str(m.floor_micros),
@@ -1221,6 +1239,7 @@ impl Contract {
             demo_template: self.demo_template.clone(),
             weekly_template: self.weekly_template.clone(),
             observation_deposit: U128(self.observation_deposit.as_yoctonear()),
+            index: self.index,
             observation_budget: U128(self.budget()),
             next_pending_id: U64(self.next_pending_id),
             next_market_id: U64(self.next_market_id),
@@ -1443,6 +1462,14 @@ impl NonFungibleTokenMetadataProvider for Contract {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_names_and_labels() {
+        assert_eq!(IndexId::H100_HOURLY.as_str(), "H100_HOURLY");
+        assert_eq!(IndexId::TOKEN_PRICE.as_str(), "TOKEN_PRICE");
+        assert_eq!(IndexId::H100_HOURLY.label().0, "H100");
+        assert_eq!(IndexId::TOKEN_PRICE.label(), ("LLM tokens", "USD per 1M output tokens"));
+    }
 
     #[test]
     fn hex_round_trip_and_rejects_bad_input() {
