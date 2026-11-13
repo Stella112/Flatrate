@@ -209,3 +209,21 @@ Both: floor `2_400_000`, cap `5_600_000` (section 5).
 | Standing note for the "Steal a note" button | Cover Note #2 (5 Long, market 5): mint `9n53yEweMve5bykZyFmjwdhi2atSAXhAPZJtVBPnTTPJ`, wrap `HsbDndYYSUNPLEy4QV6weh7WXuq5qFg7UKSX7R3h2dpa`, transfer to `holder.flatrate-maris.testnet` `BvA9qWATb3cHPR3fDPSNFarJRnA4c9k8HVXxrDBJ4iuv` | near-cli output |
 | Keeper | implicit account `54cf686374f338d49d9a8e12e9912b6fa7f10ee7d5fcc561b6faa4abfac6158e`, key generated on the VPS (`near account create-account fund-later use-auto-generation`), funded 1 NEAR tx `6YZtKcHM2VEiPeUhfeEzC9yzvXsaW6B9MM7bPXKvtw84`; cron `15 */6 * * *` runs `scripts/keeper-cron.sh` for market 5; first pass tx `CxdEPMiCdqvSrDyaxvsQH38ZvX6KEdYLYJRWkY6MpxWF` (OutLayer request 34321) | VPS crontab and log |
 | near-cli `tokens send-near` to a new implicit account | waits for an interactive confirmation; `transaction construct-transaction ... add-action transfer` sends without asking | observed 2026-11-12 |
+
+## 12. Sources for the product description (2026-11-13)
+
+Checked by fetching each page; claims without a source were removed from `docs/Flatrate-full-description-v2.md`.
+
+| Claim | Source | Supporting text |
+|---|---|---|
+| H100 $7-10/hr early 2024, $2-4 late 2025 | https://www.silicondata.com/blog/h100-rental-price-over-time | "Early rental prices routinely exceeded $7–$10 per GPU-hour"; "widely available for $2–$4 per hour" |
+| H100 near $1.70 (July 2026); Kalshi forward curves (B200, H200, A100) | https://aiweekly.co/alerts/kalshi-launches-gpu-compute-forward-curves-for-ai-hedging | "H100s currently trade near $1.70" |
+| RunPod $2.69 vs Shadeform $4.17 on 13 Oct | https://github.com/Cassxbt/piry (README line 54) | "On 13 Oct the same H100 SXM hour was $2.69 on RunPod ... and $4.17 across Shadeform's clouds" |
+| CME compute futures under regulatory review | https://www.fia.org/marketvoice/articles/exchanges-eye-turning-ai-compute-tradable-commodity (4 Nov 2026) | "The contracts are under regulatory review." |
+| One CME contract = 730 GPU-hours | https://www.fia.org/fia/articles/explainer-what-are-compute-futures-and-how-do-they-work | "Each contract represents 730 GPU-hours" |
+| Bernstein: "dominated by speculative flows"; Architect AX perpetual-style compute futures | https://theblock.co/post/408758/crypto-style-derivatives-reach-ai-compute-ahead-of-planned-cme-and-ice-futures-bernstein | quote as given |
+| CME + Silicon Data compute futures | https://www.cmegroup.com/media-room/press-releases/2026/8/11/cme_group_and_silicondatatolaunchcomputefuturesonoctober5tounloc.html | press release (page timed out on fetch; details also in the FIA explainer) |
+| ICE + Ornn compute futures | https://finance.yahoo.com/markets/options/articles/ice-ornn-launch-gpu-compute-142609556.html | "based on Ornn's Compute Price Index (OCPI)" |
+| SealedSwarm, C0-op, Flock (this hackathon) | https://nearhunt.xyz/p/dbedb794-5294-4c07-a914-074eead64668, https://nearhunt.xyz/p/3c93bf03-e823-4fab-b708-9d067a790162, https://nearhunt.xyz/p/fa6703a5-2e4c-4721-9bdb-8f22915922f5 | project descriptions on NEAR Hunt |
+| Published attacks on Intel TDX | https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/ (TDXdown, ACM CCS 2024, CVE-2024-27457); https://eprint.iacr.org/2025/079 | "single-stepping and StumbleStepping, work on the most recent Intel TDX enabled Xeon Scalable CPUs" |
+| Removed (no source found) | Ornn index $3.30 on 9 Nov 2026, +25% in a month | nearest found: +22% to $3.28 in September 2026 (KuCoin flash), not the stated date |

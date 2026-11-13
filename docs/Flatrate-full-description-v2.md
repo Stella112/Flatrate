@@ -9,17 +9,16 @@ Tagline: Lock next week’s AI compute bill. Fully backed, never liquidated, pri
 •Status: design agreed. Nothing is built yet, so every feature below is planned.
 The problem
 AI builders sell at fixed prices but buy compute at floating ones. When the price of GPU hours jumps, their margin disappears.
-The price really moves. Each line below needs a source link before submission, or it is deleted:
-•H100 rental fell from about $8–10 an hour in early 2024 to $1.80–3.50 by mid-2026. (source link needed)
-•Ornn’s index showed $3.30 on 9 November 2026, up about 25% in a month.
-•On one day in October, the same H100 hour cost $2.69 on RunPod and $4.17 across Shadeform’s clouds, according to PIRY’s README.
+The price really moves (sources linked; lines without a source were removed on 2026-11-13):
+•H100 rental often cost $7–10 per GPU-hour in early 2024 and was widely available for $2–4 by late 2025 (Silicon Data, https://www.silicondata.com/blog/h100-rental-price-over-time); H100s traded near $1.70 in July 2026 (AI Weekly, https://aiweekly.co/alerts/kalshi-launches-gpu-compute-forward-curves-for-ai-hedging).
+•On 13 October 2026 the same H100 SXM hour cost $2.69 on RunPod and $4.17 across Shadeform’s clouds, according to PIRY’s README (https://github.com/Cassxbt/piry).
 Who is hurt:
 •Agents on NEAR’s Agent Market. They quote a fixed price per job, then pay floating prices for GPU time.
 •AI startups. They charge customers a fixed monthly price and rent GPUs week to week.
 •GPU owners and their lenders. They carry the opposite risk when prices fall.
 Why existing markets don’t help them:
-•CME’s and ICE’s compute futures are still waiting on regulatory review, and one CME contract covers 730 GPU-hours. (source link needed)
-•The crypto versions are leveraged perpetuals. Bernstein describes that liquidity as “dominated by speculative flows”.
+•CME’s compute futures are under regulatory review (FIA, 4 November 2026, https://www.fia.org/marketvoice/articles/exchanges-eye-turning-ai-compute-tradable-commodity), and one contract covers 730 GPU-hours (FIA explainer, https://www.fia.org/fia/articles/explainer-what-are-compute-futures-and-how-do-they-work).
+•The crypto versions are perpetual-style futures. Bernstein describes that liquidity as “dominated by speculative flows” (The Block, https://theblock.co/post/408758/crypto-style-derivatives-reach-ai-compute-ahead-of-planned-cme-and-ice-futures-bernstein).
 •None of them is on NEAR, and none is sized to a small team’s or an agent’s actual bill.
 The solution
 Flatrate is a small, fully backed price-lock market for GPU time, run by one keyless contract on NEAR.
@@ -98,7 +97,7 @@ OutLayer runs code inside a trusted execution environment (TEE): an Intel TDX en
 •What that stops: a node operator editing prices in transit, and leaking the price sources’ API keys, which are stored as OutLayer secrets and opened only inside the enclave.
 •How the contract trusts it: it accepts a price only from the OutLayer contract, for one pinned version of the price code. It does not check the hardware attestation itself; the Proof page shows the attestation data OutLayer returns so anyone can inspect it.
 •What it does not prove: that a source’s price is true. It proves the right code fetched it unchanged.
-•Its limits: OutLayer still holds governance keys at this stage (its own docs say so), and Intel TDX has had published hardware attacks. Both are listed in the README.
+•Its limits: OutLayer still holds governance keys at this stage (its own docs say so), and Intel TDX has had published attacks, for example TDXdown (ACM CCS 2024, https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/). Both are listed in the README.
 •Extra 2 uses it further: auction bids encrypted to an OutLayer enclave and cleared inside it, so no bid is ever public.
 Privacy and trust
 Bids stay hidden until the auction closes, everything else is public and checkable, and OutLayer is the main thing users must trust.
@@ -158,8 +157,8 @@ Known limitations
 •Rhea trading depends on Rhea’s testnet contract. If it is not live, there is no pool and the README says so.
 •The demo’s guest accounts are sponsored. When the sponsor budget runs out, the app is read-only and the scripted demo still works.
 Where this idea already exists
-Each row needs a source link before submission, or it is deleted.
+Sources linked on 2026-11-13.
 Project	Where	How Flatrate differs
-Kalshi, CME, ICE (source link needed)	Regulated venues	Open to small teams and agents, with no minimum size
-GPU perpetuals on crypto exchanges (source link needed)	Several venues	No leverage and no liquidation
-SealedSwarm, Co-op, Flock (source link needed)	This hackathon	They buy GPU hours. Flatrate fixes the price.
+Kalshi (https://aiweekly.co/alerts/kalshi-launches-gpu-compute-forward-curves-for-ai-hedging), CME (https://www.cmegroup.com/media-room/press-releases/2026/8/11/cme_group_and_silicondatatolaunchcomputefuturesonoctober5tounloc.html), ICE (https://finance.yahoo.com/markets/options/articles/ice-ornn-launch-gpu-compute-142609556.html)	Regulated venues	Open to small teams and agents, with no minimum size
+Perpetual-style compute futures on Architect’s AX exchange (https://theblock.co/post/408758/crypto-style-derivatives-reach-ai-compute-ahead-of-planned-cme-and-ice-futures-bernstein)	Crypto-style venue	No leverage and no liquidation
+SealedSwarm (https://nearhunt.xyz/p/dbedb794-5294-4c07-a914-074eead64668), C0-op (https://nearhunt.xyz/p/3c93bf03-e823-4fab-b708-9d067a790162), Flock (https://nearhunt.xyz/p/fa6703a5-2e4c-4721-9bdb-8f22915922f5)	This hackathon	SealedSwarm and C0-op buy GPU hours (C0-op also API credits and data); Flock pools agent demand. Flatrate fixes the price.

@@ -27,6 +27,7 @@ Every claim in README.md and AGENTS.md has a row here. Explorer: `https://testne
 | A sandbox replay of the recorded market gives the same result as testnet | `make demo-scripted` (`scripted_demo_replays_market_2`) | fixtures/demo/market-2.json |
 | Pay from any chain shows dry-run quotes (no testnet; nothing is sent) | /#/pay on the hosted site | 1Click: fixtures/1click-quote.json (recorded); Aurora: pending the key in Vercel |
 | The contract account has no full-access key | `make verify` row "contract has no full-access key" | pending `go keyless` |
+| Intel TDX has had published attacks (README Limitations) | — | TDXdown, ACM CCS 2024: https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/ (FACTS.md section 12) |
 
 ## History: contract v1 (replaced in place on 2026-11-13)
 
