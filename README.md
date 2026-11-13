@@ -13,7 +13,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract.
 4. Open **https://flatrate-gpu.vercel.app/?demo=scripted** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
 5. From a clone: `make vendor && make verify` (Linux or macOS, see "Run the checks"). Expect a table and `RESULT: no FAIL` in a few minutes.
-6. From a clone: `make test`. Expect the sandbox suite to end with `test result: ok. 29 passed` (several minutes).
+6. From a clone: `make test`. Expect the sandbox suite to end with `test result: ok. 30 passed` (several minutes).
 7. From a clone: `make demo-scripted`. Expect `SCRIPTED DEMO PASS: sandbox replay equals testnet market 2`.
 
 ## How it works

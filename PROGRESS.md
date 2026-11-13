@@ -463,3 +463,9 @@ Token DEMO market 10:
 
 ## Extras 3, 4, 5
 Not built; reasons in BLOCKERS.md B12.
+
+### Final fresh clone after the extras (VPS, commit 374f7d3)
+```
+make verify   -> RESULT: no FAIL, 499 s (H100 and [tokens] rows; [tokens] keyless PENDING; OutLayer runner SKIP, not built in a fresh clone)
+make test     -> test result: ok. 30 passed (sandbox), 914 s
+```
