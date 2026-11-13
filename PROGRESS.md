@@ -381,3 +381,19 @@ RESULT: no FAIL
 verify_exit=0 verify_s=480
 ```
 480 s on the 2-core VPS from a cold build (Docker image pull and two reproducible oracle builds included).
+
+### Fresh clone `make test` (VPS, no NEAR credentials, commit c4af08c)
+```
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 865.55s
+test_exit=0 test_s=908
+```
+
+### WEEKLY market 10: two sealed bids (2026-11-13)
+Two accounts committed opposite bids so the weekly market opens from a two-sided auction. Each escrow is 30 fUSD, more than either bid needs, so the deposit does not reveal the bid. Salts are in `target/market10-bids.txt` (gitignored) and are revealed by `scripts/reveal-bids.sh`.
+
+| Account | Commit tx | Escrow |
+|---|---|---|
+| flatrate-maris.testnet | [A8RR7Njy](https://testnet.nearblocks.io/txns/A8RR7NjyjgLGusJZeTLdZ1F5hmAgZ2SvaBx156Nu2G5F) | 30 fUSD |
+| holder.flatrate-maris.testnet | [5uN4cHfE](https://testnet.nearblocks.io/txns/5uN4cHfEUu3d4ZXvQQvCyWSnspkeddqn2ToQoM3u4og5) | 30 fUSD |
+
+`get_market 10` after the commits: `status: Auction`, `bid_count: 2`. Reveal window from the contract: 2026-11-14 11:32:43 to 23:32:43 UTC; the keeper clears after that. The bid contents go here after the reveal.
