@@ -245,3 +245,11 @@ Checked by fetching each page; claims without a source were removed from `docs/F
 | `outlayer run '<json>'` on Windows passes `{}` as input (quoting lost); `--input <file>` works | requests 40679 (input `{}`), 40690 (file) |
 | Testnet faucet: `near account create-account sponsor-by-faucet-service` funds a new account with 10 NEAR | accounts created and deleted into the root: 7PP14zn6RYGi7aoATpT3gyfnmqataEghX27bbqdnq5wX, 2dqREGPJK7xTu3EgsAuSekcWMS2378CC5LWR3wkTrPQX |
 | NEAR Wallet Selector 10.1.4 (`core`, `meteor-wallet`, `my-near-wallet`, `intear-wallet`); `modal-ui` 10.1.4 depends on react 18.3.1, so it is not used (site is React 19) | `npm view @near-wallet-selector/<pkg>@10.1.4 dependencies` |
+
+## 15. Chain signatures (2026-11-13)
+| Fact | Source |
+|---|---|
+| MPC signer `v1.signer-prod.testnet`: view `version` -> `3.19.0`; `public_key` -> `secp256k1:4NfTiv3U…` | RPC view calls |
+| `chainsig.js` 1.1.16: `new contracts.ChainSignatureContract({networkId, contractId})`, `new chainAdapters.evm.EVM({publicClient, contract})`, `deriveAddressAndPublicKey(account, path)`, `prepareTransactionForSigning`, `contract.sign({payloads, path, keyType: "Ecdsa", signerAccount})`, `finalizeTransactionSigning`, `broadcastTx` (the README's `contracts.near.*` and `sign({payload, key_version})` are out of date) | `scripts/chainsig/node_modules/chainsig.js/node/index.d.ts` |
+| Base Sepolia RPC `https://sepolia.base.org` (viem `baseSepolia`) | run below |
+| holder, path `flatrate-payout` -> `0xF8677CE5ebc12A0E396e2747e4917C7C6E2dBe61`; root, same path -> `0x701cbB65Bd7386222F76b27B4CF62666d950660E` | `sepolia.mjs address` |

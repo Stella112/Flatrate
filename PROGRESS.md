@@ -469,3 +469,16 @@ Not built; reasons in BLOCKERS.md B12.
 make verify   -> RESULT: no FAIL, 499 s (H100 and [tokens] rows; [tokens] keyless PENDING; OutLayer runner SKIP, not built in a fresh clone)
 make test     -> test result: ok. 30 passed (sandbox), 914 s
 ```
+
+
+## Extra: cross-chain, reduced to chain signatures (2026-11-13)
+Maris chose the reduced version (BLOCKERS.md B13) and funded `0xF8677CE5ebc12A0E396e2747e4917C7C6E2dBe61` with 0.01 Base Sepolia ETH.
+```
+$ NEAR_ACCOUNT=holder.flatrate-maris.testnet node scripts/chainsig/sepolia.mjs send 0x701cbB65Bd7386222F76b27B4CF62666d950660E 1000000000000000
+NEAR account holder.flatrate-maris.testnet, path "flatrate-payout" -> Base Sepolia 0xF8677CE5ebc12A0E396e2747e4917C7C6E2dBe61
+balance 0.01 ETH
+MPC sign request on NEAR: https://testnet.nearblocks.io/txns/6vjfR3iW1cFiqyfk4xaUPBmJXJfax5nthG67Z2oqttSA
+Base Sepolia tx: https://sepolia.basescan.org/tx/0xa9924054d5f471a131709ac2e8d5f288f73d8446a9622256ac2ed0d496209898
+status success, block 58426740, from 0xf8677ce5ebc12a0e396e2747e4917c7c6e2dbe61
+```
+The recipient is the root account's derived address for the same path.
