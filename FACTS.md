@@ -227,3 +227,9 @@ Checked by fetching each page; claims without a source were removed from `docs/F
 | SealedSwarm, C0-op, Flock (this hackathon) | https://nearhunt.xyz/p/dbedb794-5294-4c07-a914-074eead64668, https://nearhunt.xyz/p/3c93bf03-e823-4fab-b708-9d067a790162, https://nearhunt.xyz/p/fa6703a5-2e4c-4721-9bdb-8f22915922f5 | project descriptions on NEAR Hunt |
 | Published attacks on Intel TDX | https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/ (TDXdown, ACM CCS 2024, CVE-2024-27457); https://eprint.iacr.org/2025/079 | "single-stepping and StumbleStepping, work on the most recent Intel TDX enabled Xeon Scalable CPUs" |
 | Removed (no source found) | Ornn index $3.30 on 9 Nov 2026, +25% in a month | nearest found: +22% to $3.28 in September 2026 (KuCoin flash), not the stated date |
+
+## 13. Function-call access keys and deposits (2026-11-13)
+| Fact | Source |
+|---|---|
+| Function-call keys can only call one contract and "do not allow to attach NEAR tokens to the call" | https://docs.near.org/protocol/access-keys |
+| "Function call access keys cannot be used to transfer $NEAR." | https://nomicon.io/DataStructures/AccessKey |

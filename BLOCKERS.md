@@ -91,3 +91,11 @@ Also found: the browser request waited for FINAL, which the RPC answers with HTT
 ## B6 update (2026-11-13): RESOLVED by decision
 
 Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run under a separate test command") and Maris's choice on 2026-11-13, `make verify` no longer runs the sandbox suite; `make test` does. This differs from the build prompt's `make verify` step 2; the description was chosen where the two differed.
+
+## B11: extra 1 (agent auto-hedging) cannot commit bids with a flatrate-only function-call key (2026-11-13)
+- The build prompt says the agent holds "a function-call access key limited to the flatrate contract" and bids in auctions.
+- In the deployed contract a bid is committed only through fUSD `ft_transfer_call` (`ft_on_transfer`, `contracts/flatrate/src/lib.rs:800`), which needs 1 yoctoNEAR attached and is a call to `fusd`, not `flatrate`.
+- docs.near.org/protocol/access-keys: function-call keys "do not allow to attach NEAR tokens to the call" (FACTS.md section 13). So a flatrate-only key cannot commit.
+- The contract is keyless, so a zero-deposit commit path cannot be added. The same holds for extras 2 and 3, which need contract changes (new index, enclave clearing).
+- With a flatrate-only key the agent can do: reveal_bid, clear_auction, settle, redeem, withdraw_refund, claim_transfer, wrap_note, unwrap_note, redeem_note, roll_market, request_observation.
+- Waiting for Maris to choose a design.
