@@ -53,7 +53,8 @@ oracle-repro: vendor
 oracle-runner: vendor
 	cd vendor/near-outlayer/wasi-examples/wasi-test-runner && cargo build --release
 
-## Everything a reviewer needs: tests, builds, oracle, read-only testnet checks, a table.
+## Reviewer checks in a few minutes: shared tests, builds, oracle, read-only testnet checks, a table.
+## The sandbox suite (slower) runs under `make test`.
 verify:
 	bash scripts/verify.sh
 

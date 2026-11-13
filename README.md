@@ -10,8 +10,9 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 2. Open a DEMO market. If the latest one is settled, click "Roll the next DEMO market" (anyone can): a new market opens with its band centred on the last settled average. Commit a sealed bid within 3 minutes, reveal within the next 2, then clear. The keeper fills one price per 1-minute slot for 8 minutes; settle and redeem after that.
 3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract.
 4. Open **https://flatrate-gpu.vercel.app/?demo=scripted** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
-5. From a clone: `make vendor && make verify` (Linux or macOS, see "Run the checks"). Expect a table and `RESULT: no FAIL`.
-6. From a clone: `make demo-scripted`. Expect `SCRIPTED DEMO PASS: sandbox replay equals testnet market 2`.
+5. From a clone: `make vendor && make verify` (Linux or macOS, see "Run the checks"). Expect a table and `RESULT: no FAIL` in a few minutes.
+6. From a clone: `make test`. Expect the sandbox suite to end with `test result: ok. 29 passed` (several minutes).
+7. From a clone: `make demo-scripted`. Expect `SCRIPTED DEMO PASS: sandbox replay equals testnet market 2`.
 
 ## How it works
 
@@ -66,7 +67,8 @@ Requirements: Linux x86_64/aarch64 or macOS arm64 (near-sandbox has no Windows b
 
 ```bash
 make vendor          # clone OutLayer at the pinned commit (build script + test runner)
-make verify          # tests, builds, oracle, read-only testnet checks; prints a table
+make verify          # shared tests, builds, oracle, read-only testnet checks; prints a table (a few minutes)
+make test            # shared, contract unit, oracle and sandbox tests (several minutes)
 make demo-scripted   # replay a recorded testnet market in the sandbox
 make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; prints the sha256
 ```

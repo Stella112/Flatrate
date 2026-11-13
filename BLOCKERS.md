@@ -87,3 +87,7 @@ Original note:
 Every run for market 11 failed inside OutLayer: guest request `DEbDWb1SL2VsqKARNDVZ3K4CqzVYHHdWmGVQNfYds7N1` and keeper request `Do3i2x8hunaBS89X6WUjokzsxJAeFRyRjEvubFLsz21G` (OutLayer request 38198) both log `Execution promise failed: Failed. Refunded 5000000000000000000000 yoctoNEAR`; the contract recorded `observation_rejected: oracle_no_output` and freed the slot each time. A direct `outlayer run flatrate-maris.testnet/flatrate-oracle ...` with no contract involved failed the same minute (`the request failed with timeout error`), and `GET https://testnet-api.outlayer.ai/public/workers` showed the testnet workers with 35 s of uptime (restarting). The same oracle version recorded prices for market 5 at 00:16 and 06:16 UTC. Market 11 is expected to settle void; the settled DEMO run is repeated once OutLayer answers again.
 
 Also found: the browser request waited for FINAL, which the RPC answers with HTTP 408 while the yield is open; the site now returns once the request is included and shows the result through the slot status.
+
+## B6 update (2026-11-13): RESOLVED by decision
+
+Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run under a separate test command") and Maris's choice on 2026-11-13, `make verify` no longer runs the sandbox suite; `make test` does. This differs from the build prompt's `make verify` step 2; the description was chosen where the two differed.

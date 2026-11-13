@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # make verify: everything a reviewer needs, with no wallet, no secret and no network writes.
 #   1. shared/ unit and property tests
-#   2. contract unit tests, contract builds (cargo near), all sandbox tests
+#   2. contract unit tests and contract builds (cargo near); the sandbox suite runs under `make test`
 #   3. oracle: parsing tests against fixtures/prices, and the wasm run on those fixtures in
 #      OutLayer's test runner (wasi-test) when it is available
 #   4. deployed testnet contracts, view calls only (scripts/verify-chain.mjs)
@@ -34,16 +34,12 @@ else row "contract unit tests" FAIL "see $LOG/unit.log"; fi
 
 if step "cargo near build" "$LOG/build.log" make build; then
   row "cargo near build (fusd, flatrate, mock)" PASS "$(ls target/wasm/*.wasm | xargs -n1 basename | tr '\n' ' ')"
-  if step "sandbox tests" "$LOG/sandbox.log" cargo test -p flatrate --test sandbox -- --test-threads="${SANDBOX_THREADS:-4}" --nocapture; then
-    row "sandbox tests (near-workspaces)" PASS "$(last "$LOG/sandbox.log" 'test result')"
-  else row "sandbox tests (near-workspaces)" FAIL "$(last "$LOG/sandbox.log" 'test result|panicked') (see $LOG/sandbox.log)"; fi
-  G=$(grep -oE 'CLEAR_200_GAS[^;]*' "$LOG/sandbox.log" | sed 's/CLEAR_200_GAS //')
-  [ -n "$G" ] && row "200-bid auction clears in one tx" PASS "$G"
-  grep -q "SCRIPTED DEMO PASS" "$LOG/sandbox.log" && row "scripted demo equals testnet market 2" PASS "scripted_demo_replays_market_2"
 else
   row "cargo near build (fusd, flatrate, mock)" FAIL "see $LOG/build.log"
-  row "sandbox tests (near-workspaces)" FAIL "not run: build failed"
 fi
+# The sandbox suite (29 tests, several minutes) runs under `make test`, not here
+# (docs/Flatrate-full-description-v2.md, "Proof layer"; Maris's decision 2026-11-13).
+row "sandbox tests" INFO "run separately: make test (or make demo-scripted for the recorded market)"
 
 # 3. oracle
 if step "oracle parsing tests" "$LOG/oracle.log" bash -c 'cd oracle && cargo test'; then

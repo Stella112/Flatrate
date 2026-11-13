@@ -3,15 +3,16 @@
 For AI reviewers. Plain steps; each says what to expect.
 
 ```
-1. Run: make vendor && make verify   -> expect: a table, every row PASS (SKIP only where Docker or the OutLayer runner is missing; PENDING only for the keyless row until the owner approves), last line "RESULT: no FAIL", exit 0
-2. Open: https://flatrate-gpu.vercel.app/#/proof -> expect: observations with OutLayer request ids, tx links, per-source prices, and a ✓ where the stored price equals OutLayer's output
-3. Run: make demo-scripted           -> expect: full market lifecycle replayed from fixtures/demo/market-2.json, ending "SCRIPTED DEMO PASS: sandbox replay equals testnet market 2"
+1. Run: make vendor && make verify   -> expect (a few minutes): a table; shared tests, contract builds, oracle checks and read-only testnet checks PASS (SKIP only where Docker or the OutLayer runner is missing; PENDING only for the keyless row until the owner approves); last line "RESULT: no FAIL", exit 0
+2. Run: make test                    -> expect (several minutes, sandbox): "test result: ok. 29 passed" for the sandbox suite, plus shared, unit and oracle tests
+3. Open: https://flatrate-gpu.vercel.app/#/proof -> expect: prices with OutLayer request ids, tx links, per-source prices and attestation checks
+4. Run: make demo-scripted           -> expect: a recorded testnet market replayed in the sandbox, ending "SCRIPTED DEMO PASS: sandbox replay equals testnet market 2"
    Open: https://flatrate-gpu.vercel.app/?demo=scripted -> expect: the same market step by step, "Scripted demo" badge on every screen
-4. Read: CLAIMS.md                   -> each row has a test name or a testnet transaction
-5. Read: README.md "Limitations"
+5. Read: CLAIMS.md                   -> each row has a test name or a testnet transaction
+6. Read: README.md "Limitations"
 ```
 
-Requirements for steps 1 and 3: Linux or macOS (near-sandbox has no Windows build), Rust with `wasm32-unknown-unknown` and `wasm32-wasip2`, `cargo-near` 0.23, Node 20+. Docker is optional: with it, `make verify` rebuilds `oracle/` in OutLayer's pinned compiler image and compares the sha256 with the version pinned on-chain. `make oracle-runner` builds OutLayer's test runner (several minutes, once) so `make verify` can run the oracle wasm on the recorded price responses.
+Requirements for steps 1, 2 and 4: Linux or macOS (near-sandbox has no Windows build), Rust with `wasm32-unknown-unknown` and `wasm32-wasip2`, `cargo-near` 0.23, Node 20+. Docker is optional: with it, `make verify` rebuilds `oracle/` in OutLayer's pinned compiler image and compares the sha256 with the version pinned on-chain. `make oracle-runner` builds OutLayer's test runner (several minutes, once) so `make verify` can run the oracle wasm on the recorded price responses.
 
 Where things are:
 
