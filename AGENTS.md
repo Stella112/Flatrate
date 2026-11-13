@@ -3,7 +3,7 @@
 For AI reviewers. Plain steps; each says what to expect.
 
 ```
-1. Run: make vendor && make verify   -> expect (a few minutes): a table; shared tests, contract builds, oracle checks and read-only testnet checks PASS (SKIP only where Docker or the OutLayer runner is missing; PENDING only for the keyless row until the owner approves); last line "RESULT: no FAIL", exit 0
+1. Run: make vendor && make verify   -> expect (a few minutes): a table; shared tests, contract builds, oracle checks and read-only testnet checks PASS (SKIP only where Docker or the OutLayer runner is missing); last line "RESULT: no FAIL", exit 0
 2. Run: make test                    -> expect (several minutes, sandbox): "test result: ok. 29 passed" for the sandbox suite, plus shared, unit and oracle tests
 3. Open: https://flatrate-gpu.vercel.app/#/proof -> expect: prices with OutLayer request ids, tx links, per-source prices and attestation checks
 4. Run: make demo-scripted           -> expect: a recorded testnet market replayed in the sandbox, ending "SCRIPTED DEMO PASS: sandbox replay equals testnet market 2"

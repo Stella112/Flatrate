@@ -330,3 +330,54 @@ On the VPS: function-call key added to the keeper account `54cf6863...158e` for 
 `node scripts/verify-chain.mjs --oracle-hash 6c252d52...`: market 11 payout recomputed PASS (4/8 slots, mean 3980000, long 493750); OutLayer attestation per recorded price PASS (4 match pinned wasm + market input); keyless PENDING.
 
 Found and fixed during the run: the site waited for FINAL on `request_observation`; the RPC answers 408 while the yield is open, so the page stayed busy. It now returns once the transaction is included.
+
+## Phase 6: keyless, public roll, attack buttons, fresh clone (2026-11-13)
+
+### Keyless (after Maris wrote `go keyless`)
+```
+$ near account list-keys flatrate.flatrate-maris.testnet network-config testnet now
+| 1 | ed25519:51Q6NWT52SMkTkvCmMjUX51M1MYkgHJZSKxsYgiuVF4z | 277369895000003 | full access |
+$ near account delete-keys flatrate.flatrate-maris.testnet public-keys ed25519:51Q6NWT52SMkTkvCmMjUX51M1MYkgHJZSKxsYgiuVF4z network-config testnet sign-with-legacy-keychain send
+Transaction ID: CYNnUzUJMmvrWXCBTaack7CHUc1sYQ76WxxBdBqqTX89
+Access key <ed25519:51Q6NWT52SMkTkvCmMjUX51M1MYkgHJZSKxsYgiuVF4z> for account <flatrate.flatrate-maris.testnet> has been successfully deleted.
+$ curl -X POST https://rpc.testnet.fastnear.com -d '{"method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"flatrate.flatrate-maris.testnet"}}'
+{"result":{"block_hash":"4sc2E9v3LPY6TwABLRVoxsfuQQaAR83AhtVBzyUDN5uL","block_height":277508508,"keys":[]}}
+```
+(The first attempt stopped before sending: near-cli's RPC returned "rate limit" while fetching the nonce.)
+
+### Market rolled by a non-owner after keyless
+The guest `cb4edd970f31d24a89611b3bd81dc91daae55dcba6c3eb6f182b0e8d344653a1` pressed "Roll the next DEMO market" on settled market 11: `roll_market` tx [FHm7EtV2](https://testnet.nearblocks.io/txns/FHm7EtV2A5rB8j2HGT95bysHBy8pFRSFpTmNruhJxJne) -> market 12, `created_by` the guest, band floor `2300000`, cap `5500000` (market 11 average 3980000 x0.6 = 2.388 -> 2.30, x1.4 = 5.572 -> 5.50). The keeper (function-call key) cleared it ([1dPYvaYF](https://testnet.nearblocks.io/txns/1dPYvaYFCZQwEx2rv7SDx6aoLSjMF1UaYdxShqBWA9E)) and filled slots 0 and 2 ([48fWmqvG](https://testnet.nearblocks.io/txns/48fWmqvGoQcekXctbuX3hiko912HWur6a7zQgPbqc2rJ), [GhUFSnYc](https://testnet.nearblocks.io/txns/GhUFSnYcFiHdKCu3BRQpBEg3RjY2jmZ2zUg968i69cJa); OutLayer 38405, 38418).
+
+### Attack buttons on the hosted Proof page (guest account, market 12, contract keyless)
+Setup: the guest minted 5 pairs ([8z2sBvRe](https://testnet.nearblocks.io/txns/8z2sBvReuAhVwHdBv1DxVx83ZB5CcbEw9krj4PkA9JYU)), wrapped 5 Long as Cover Note #1001 ([HpVRTaV8](https://testnet.nearblocks.io/txns/HpVRTaV8R3QxRSwe7f1uixeNuWFn39JWUZ9waoJpnPp1)) and transferred it to `holder.flatrate-maris.testnet` ([84Ss8mqg](https://testnet.nearblocks.io/txns/84Ss8mqgsyXseeRTQ84ChA4iZnXdtu4xgST38DnVK2ZZ)).
+
+| Button | Target | Tx (fails on-chain) | Error |
+|---|---|---|---|
+| Fake price | market 12, pending id 999999999 | [8btQUK27](https://testnet.nearblocks.io/txns/8btQUK27Vn2y5tBHbJLVoJLDJG7PRLAWfs29dkwcysiY) | `ERR_NOT_OUTLAYER` |
+| Second price in the same slot | market 12, slot 3 (keeper's request in flight) | [Frg5Ei1c](https://testnet.nearblocks.io/txns/Frg5Ei1csteSamT86bEDPUELAgE7mcx9qzo5uZB2YvbU) | `ERR_SLOT_FILLED` |
+| Early settlement | market 12 | [7qXXU3F7](https://testnet.nearblocks.io/txns/7qXXU3F7vjkkb85tTFzbDfSe92XgARm3JnsJHqxNxdJm) | `ERR_PERIOD_NOT_ENDED` |
+| Steal a note | note #1001 owned by holder | [6oAz5cBe](https://testnet.nearblocks.io/txns/6oAz5cBeqGvZ4btNZqXvUFDtxP61HT5rR7CpKMwjno3a) | `ERR_NOT_OWNER` |
+
+Screenshot: `docs/screens/11-attacks-v2-keyless.jpg`.
+
+### Fresh clone, no NEAR credentials (VPS, HOME without ~/.near-credentials, commit c4af08c)
+```
+$ make vendor && make verify
+FLATRATE VERIFY  (480 s, logs in target/verify/)
+shared payoff/median/auction tests             PASS     test result: ok. 18 passed
+contract unit tests                            PASS     7 passed
+cargo near build (fusd, flatrate, mock)        PASS     flatrate.wasm fusd.wasm mock_outlayer.wasm
+sandbox tests                                  INFO     run separately: make test
+oracle parsing vs fixtures/prices              PASS     test result: ok. 5 passed
+oracle reproducible build                      PASS     sha256 6c252d52804cb3f356ab1f5718069a57ab2d2fb96ad14e21eb18277fbcdaaf44
+oracle wasm on fixtures (OutLayer runner)      PASS     median 3980000 = median(2.56, 3.976, 3.99, 3.98, 5.087)
+contract readable                              PASS     flatrate.flatrate-maris.testnet: 2 markets ...
+pinned oracle version = build of oracle/       PASS     contract 6c252d52804cb3f3… vs local reproducible build 6c252d52804cb3f3…
+OutLayer version 6c252d5280… exists            PASS     markets [10,11] + new markets
+market 11 payout recomputed                    PASS     4/8 slots, mean 3980000, long 493750 (recomputed 493750)
+OutLayer attestation per recorded price        PASS     4 match pinned wasm + market input
+contract has no full-access key                PASS     0 keys, none full-access
+RESULT: no FAIL
+verify_exit=0 verify_s=480
+```
+480 s on the 2-core VPS from a cold build (Docker image pull and two reproducible oracle builds included).

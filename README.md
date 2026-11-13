@@ -50,7 +50,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 
 - **OutLayer price fetching inside an enclave.** The settlement price is the output of a pinned wasm run by OutLayer at the contract's request. The contract accepts it only through its own callback for a request id it issued, one per time slot.
 - **Yield and resume.** `request_execution` returns a promise that resumes when OutLayer's worker answers; the callback gets the oracle's JSON.
-- **Public `roll_market`.** Opening, observing, clearing, settling and rolling are all public calls; the owner can only open the first market of each template. (Deleting the contract's own full-access keys is pending, see Limitations.)
+- **Keyless contract with public `roll_market`.** The contract account has no access keys, so nobody can upgrade it or act as it. Observing, clearing, settling and rolling are public calls; market 12 was rolled by a guest account after the keys were deleted.
 - **Function-call access keys.** The keeper's account holds only a key that may call `clear_auction`, `request_observation`, `settle` and `roll_market` on the flatrate contract.
 - **Implicit accounts in the browser.** Guests get an implicit account from a key made in the browser; every action on the site is a transaction signed by that key.
 - **NEAR Intents quotes.** The "Pay from any chain" page asks NEAR Intents 1Click (and the Aurora Intents API, when its key is configured) for a dry-run quote: what paying in USDC from an EVM chain would cost.
@@ -73,7 +73,7 @@ make demo-scripted   # replay a recorded testnet market in the sandbox
 make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; prints the sha256
 ```
 
-`make verify` reports PASS, FAIL, SKIP (a tool is missing: Docker or the OutLayer runner) or PENDING (the contract's full-access key, removed only after the owner approves). Every claim in this README has a row in [CLAIMS.md](CLAIMS.md) with a test or a testnet transaction.
+`make verify` reports PASS, FAIL, SKIP (a tool is missing: Docker or the OutLayer runner) or INFO. Every claim in this README has a row in [CLAIMS.md](CLAIMS.md) with a test or a testnet transaction.
 
 ## Limitations
 
@@ -82,7 +82,7 @@ make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; 
 - **Revealed bids are public.** Bids are hidden while bidding, but the reveal makes them public before clearing. Clearing inside an enclave is not built.
 - **The feed is only as good as its sources.** Five public APIs; Shadeform aggregates other clouds, including Verda, so they are not fully independent. A source can change its API; a run needs at least 3 working sources.
 - **The contract does not verify a TEE attestation itself.** It trusts the OutLayer contract and the pinned code version. The Proof page and `make verify` fetch OutLayer's attestation record for each price and compare its wasm, input and output hashes, but do not verify the TDX quote. OutLayer's governance still runs on keys its operators hold (near-outlayer `docs/NON_CUSTODIAL.md`). Intel TDX itself has had published attacks, for example TDXdown (Wilke, Sieck, Eisenbarth, ACM CCS 2024, https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/). OutLayer's testnet also had an outage during our first DEMO market (BLOCKERS.md B10); a market without enough slots settles void.
-- **Keys and upgrades.** The contract still has its full-access key until the owner approves deleting it (`go keyless`). After that it cannot be upgraded. The previous version was replaced in place on 2026-11-13 with a `reset` init (the old markets stay on the explorer only).
+- **No upgrades.** The contract's keys are deleted, so a bug cannot be fixed; if a price source changes its format, markets settle at the midpoint until a new contract is deployed. The previous version was replaced in place on 2026-11-13 with a `reset` init, before the keys were deleted (the old markets stay on the explorer only).
 - **Paying from another chain is a quote only.** 1Click and Aurora have no testnet; quotes are mainnet prices and nothing is sent. 1Click's quote endpoint timed out at times during the build.
 - **Sponsored guest accounts.** The sponsor pays 0.5 testnet NEAR per guest; its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
 - **Rhea.** `ref-finance-101.testnet` is live on testnet (2961 pools), but no Flatrate pool exists: the Rhea extra is not built.
