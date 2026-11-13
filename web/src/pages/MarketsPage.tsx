@@ -1,3 +1,4 @@
+import { INDEX } from "../config";
 import { href, useApp } from "../App";
 import { getMarkets } from "../data";
 import { nextDeadline, statusLabel, timeLeft, usd, longPayout } from "../format";
@@ -10,12 +11,12 @@ export function MarketsPage() {
 
   return (
     <>
-      <Card title="Lock next week's GPU price">
+      <Card title={INDEX.key === "h100" ? "Lock next week's GPU price" : "Lock next week's LLM token price"}>
         <p>
-          Each market tracks the H100 price per GPU-hour. A <strong>Long</strong> claim pays more when the price rises (for buyers of
+          Each market here tracks the {INDEX.unit}. A <strong>Long</strong> claim pays more when the price rises (for buyers of
           compute), a <strong>Short</strong> claim pays more when it falls (for sellers). One fUSD backs one Long plus one Short. At
           settlement Long pays <span className="mono">clamp((avg − floor) / (cap − floor), 0, 1)</span> fUSD and Short pays the rest.
-          Prices come from five public GPU price APIs, fetched inside an OutLayer enclave; the median is posted on-chain,
+          Prices come from {INDEX.sources}, fetched inside an OutLayer enclave; the median is posted on-chain,
           at most one price per time slot. When a market ends, anyone can roll the next one; its band is centred on the
           settled average.
         </p>

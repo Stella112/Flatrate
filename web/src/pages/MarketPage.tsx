@@ -1,3 +1,4 @@
+import { INDEX } from "../config";
 import { useRef, useState } from "react";
 import { href, useApp } from "../App";
 import { PriceChart } from "../Chart";
@@ -66,7 +67,7 @@ export function MarketPage({ id }: { id: string }) {
         <a href={href("/")}>← Markets</a>
       </p>
       <Card
-        title={`Market ${mk.id} (${mk.template}): H100 per GPU-hour`}
+        title={`Market ${mk.id} (${mk.template}): ${INDEX.unit}`}
         right={<span className={`pill pill-${statusLabel(mk.status).toLowerCase()}`}>{statusLabel(mk.status)}</span>}
       >
         <div className="grid4">

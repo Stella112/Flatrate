@@ -7,6 +7,10 @@ const FLATRATE_ID = process.env.FLATRATE_ID || "flatrate.flatrate-maris.testnet"
 const OUTLAYER_ID = process.env.OUTLAYER_ID || "outlayer.testnet";
 const PAIR = 1_000_000n;
 const OUTLAYER_API = process.env.OUTLAYER_API || "https://testnet-api.outlayer.ai";
+// Extra 2: the same checks for the token-price contract: FLATRATE_ID=tokens.flatrate-maris.testnet
+// ORACLE_DIR=oracle-tokens CHECK_PREFIX="[tokens] ".
+const ORACLE_DIR = process.env.ORACLE_DIR || "oracle";
+const PREFIX = process.env.CHECK_PREFIX || "";
 import { createHash } from "node:crypto";
 
 const argHash = (() => {
@@ -51,7 +55,7 @@ function payoff(avg, floor, cap) {
 }
 
 const rows = [];
-const add = (check, status, evidence) => rows.push([check, status, evidence]);
+const add = (check, status, evidence) => rows.push([PREFIX + check, status, evidence]);
 
 try {
   const cfg = await view(FLATRATE_ID, "get_config");
@@ -61,12 +65,12 @@ try {
   // 1. The version pinned for new markets is the reproducible build of oracle/ at this commit.
   if (argHash) {
     add(
-      "pinned oracle version = build of oracle/",
+      `pinned oracle version = build of ${ORACLE_DIR}/`,
       cfg.oracle_version_key === argHash ? "PASS" : "FAIL",
       `contract ${cfg.oracle_version_key.slice(0, 16)}… vs local reproducible build ${argHash.slice(0, 16)}…`,
     );
   } else {
-    add("pinned oracle version = build of oracle/", "SKIP", "no reproducible build hash (needs docker): bash scripts/oracle-reproducible.sh");
+    add(`pinned oracle version = build of ${ORACLE_DIR}/`, "SKIP", `no reproducible build hash (needs docker): ORACLE_DIR=${ORACLE_DIR} bash scripts/oracle-reproducible.sh`);
   }
 
   // 2. Every version pinned by a market is registered on OutLayer as the wasm with that sha256.

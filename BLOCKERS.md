@@ -100,3 +100,8 @@ Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run 
 - With a flatrate-only key the agent can do: reveal_bid, clear_auction, settle, redeem, withdraw_refund, claim_transfer, wrap_note, unwrap_note, redeem_note, roll_market, request_observation.
 - Waiting for Maris to choose a design.
 - Resolution (2026-11-13): Maris chose two keys, budget-capped. The agent commits with a full-access key on its own account and uses a flatrate-only function-call key for everything else; README Limitations says so. Run on DEMO market 13: PROGRESS.md "Extra 1".
+
+## B12: extras 3, 4 and 5 not built (2026-11-13, after "build all extras")
+- **Extra 3, enclave-cleared auction.** Needs new contract logic (accept a clearing result from an OutLayer component, with bids encrypted to it) plus a new OutLayer component and key handling. The H100 contract is keyless and cannot change; a third contract with this logic is a new design that cannot be built and tested before the 14 November deadline. Not started.
+- **Extra 4, secondary trading on Rhea.** Rhea pools trade NEP-141 tokens. Flatrate claims are balances inside the contract, not NEP-141 tokens, and the keyless contract cannot add a token interface. A wrapper token would need a deposit notification that `claim_transfer` does not send. `ref-finance-101.testnet` is live (Phase 0), but there is nothing Flatrate can list on it. Not started.
+- **Extra 5, mainnet pay-in and payout.** Spends real money; CLAUDE.md allows it only after Maris writes `approve mainnet payment`, and it needs a funded mainnet wallet. Not started.
