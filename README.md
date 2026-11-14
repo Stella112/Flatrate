@@ -8,10 +8,10 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 
 ## Try it
 
-1. Open **https://flatrate-gpu.vercel.app/**. Click "Create guest account": the page makes a key in your browser and a sponsor sends 0.1 testnet NEAR and 100 fUSD to its account. No wallet needed.
+1. Open **https://flatrate-gpu.vercel.app/** for the landing page (the story, a payoff calculator and live testnet numbers), then **https://flatrate-gpu.vercel.app/#/app** for the app. In the app's sidebar click "Create guest account": the page makes a key in your browser and a sponsor sends 0.1 testnet NEAR and 100 fUSD to its account. No wallet needed. The sidebar switches between the three contracts (H100 GPU-hour, LLM tokens, H100 private auction).
 2. Open a DEMO market. If the latest one is settled, click "Roll the next DEMO market" (anyone can): a new market opens with its band centred on the last settled average. Commit a sealed bid within 3 minutes, reveal within the next 2, then clear. The keeper fills one price per 1-minute slot for 8 minutes; settle and redeem after that.
 3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract.
-4. Open **https://flatrate-gpu.vercel.app/?demo=scripted** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
+4. Open **https://flatrate-gpu.vercel.app/?demo=scripted#/app** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
 5. From a clone: `make vendor && make verify` (Linux or macOS, see "Run the checks"). Expect a table and `RESULT: no FAIL` in a few minutes.
 6. From a clone: `make test`. Expect the sandbox suite to end with `test result: ok. 30 passed` (several minutes).
 7. From a clone: `make demo-scripted`. Expect `SCRIPTED DEMO PASS: sandbox replay equals testnet market 2`.

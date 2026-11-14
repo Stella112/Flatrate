@@ -28,6 +28,51 @@ function saveBids(g: Guest, b: SavedBid[]) {
   }
 }
 
+const STAGES: { key: string; title: string; phases: string[] }[] = [
+  { key: "auction", title: "Auction", phases: ["commit", "reveal", "clear"] },
+  { key: "prices", title: "Prices", phases: ["period"] },
+  { key: "settle", title: "Settle", phases: ["settle"] },
+  { key: "redeem", title: "Redeem", phases: ["redeem"] },
+];
+const NOW_TEXT: Record<string, string> = {
+  commit: "Bids are open. Commit a sealed bid below; it stays hidden until the auction closes.",
+  reveal: "Reveal window. Bidders open their bids so the auction can clear at one price.",
+  clear: "The auction can clear now. Anyone can press the clear button below.",
+  period: "Claims are live. Mint pairs, transfer, wrap a Cover Note; one attested price is recorded per slot.",
+  settle: "The period is over. Anyone can settle on the average of the filled slots.",
+  redeem: "Settled. Holders redeem claims and Cover Notes for fUSD.",
+};
+
+function Progress({ m, ph }: { m: Market; ph: string }) {
+  const idx = STAGES.findIndex((s) => s.phases.includes(ph));
+  const privateNote = INDEX.privateAuction && ph === "clear" ? " The enclave opens the sealed bids and returns only the fills." : "";
+  return (
+    <div className="card" style={{ padding: "16px 20px" }}>
+      <div className="lifecycle" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", marginBottom: 12 }}>
+        {STAGES.map((s, i) => (
+          <div
+            key={s.key}
+            className="lc-step"
+            style={{
+              borderColor: i === idx ? "var(--accent)" : undefined,
+              background: i < idx ? "var(--bg-2)" : i === idx ? "var(--accent-soft)" : undefined,
+              opacity: i > idx ? 0.55 : 1,
+            }}
+          >
+            <div className="lc-n">{i < idx ? "✓ done" : i === idx ? "● now" : `${i + 1}`}</div>
+            <div className="lc-t">{s.title}</div>
+          </div>
+        ))}
+      </div>
+      <div className="muted" style={{ fontSize: "0.92em" }}>
+        <b style={{ color: "var(--text)" }}>Market {m.id}: </b>
+        {NOW_TEXT[ph]}
+        {privateNote}
+      </div>
+    </div>
+  );
+}
+
 export function MarketPage({ id }: { id: string }) {
   const { demo, step, guest, refreshWallet } = useApp();
   useTick(1000);
@@ -64,9 +109,10 @@ export function MarketPage({ id }: { id: string }) {
 
   return (
     <>
-      <p>
-        <a href={href("/")}>← Markets</a>
-      </p>
+      <div className="crumb" style={{ padding: "24px 0 12px" }}>
+        <a href={href("/app")}>← Markets</a> · {INDEX.name}
+      </div>
+      <Progress m={mk} ph={ph} />
       <Card
         title={`Market ${mk.id} (${mk.template}): ${INDEX.unit}`}
         right={<span className={`pill pill-${statusLabel(mk.status).toLowerCase()}`}>{statusLabel(mk.status)}</span>}
