@@ -109,7 +109,7 @@ The same-slot button first said "No open market has a price for its current slot
 3. **Sponsor gave each guest 0.5 NEAR.** A whole lifecycle used 0.0059 NEAR, so the sponsor's 8.47 NEAR covered about 16 guests. It now gives 0.1 NEAR (about 80 guests on the same balance). README, CLAIMS and the site text say 0.1.
 4. **"Create guest account" stayed visible after funding** until a reload. The button now hides on success, and the balance is re-read at 2.5, 6 and 12 seconds.
 
-Fixes 3 and 4 were built and type-checked locally (`npm run build`), and the 0.1 NEAR text was checked on the local dev server; they reach the hosted site when this commit is deployed, and have not yet been checked there.
+Fixes 3 and 4 were built and type-checked locally (`npm run build`), and the 0.1 NEAR text was checked on the local dev server; after commit `06558bc` deployed, a new guest on the hosted site was funded with 0.1 NEAR and 100 fUSD (message "Guest account funded: 0.1 NEAR and 100 fUSD (tx abMYoziA, 8mAxJZSy)"); the button disappeared at once and the balance "0.100 NEAR · 100 fUSD" appeared without a reload.
 5. **README named four tracks**; Autonomous Business added, with a CLAIMS row (market 14).
 
 ## Open items and risks
