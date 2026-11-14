@@ -61,7 +61,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 - **Function-call access keys.** The keeper's account holds only a key that may call `clear_auction`, `request_observation`, `settle` and `roll_market` on the flatrate contract. The hedging agent rolls, reveals, withdraws refunds and redeems with a key limited to the flatrate contract (allowance 0.25 NEAR).
 - **Implicit accounts in the browser.** Guests get an implicit account from a key made in the browser; every action on the site is a transaction signed by that key. Visitors can instead sign in with a NEAR wallet (NEAR Wallet Selector: Meteor, MyNearWallet, Intear).
 - **Chain signatures.** A NEAR account signs transactions for an address on Base Sepolia through NEAR's MPC signer: `holder.flatrate-maris.testnet` sent 0.001 test ETH from its derived address (sign request [6vjfR3iW](https://testnet.nearblocks.io/txns/6vjfR3iW1cFiqyfk4xaUPBmJXJfax5nthG67Z2oqttSA), Base Sepolia [0xa9924054](https://sepolia.basescan.org/tx/0xa9924054d5f471a131709ac2e8d5f288f73d8446a9622256ac2ed0d496209898)).
-- **NEAR Intents quotes.** The "Pay from any chain" page asks NEAR Intents 1Click (and the Aurora Intents API, when its key is configured) for a dry-run quote: what paying in USDC from an EVM chain would cost.
+- **NEAR Intents quotes.** The "Pay from any chain" page asks NEAR Intents 1Click and the Aurora Intents API for a dry-run quote, shown side by side: what paying in USDC from an EVM chain would cost.
 
 ## Tracks
 

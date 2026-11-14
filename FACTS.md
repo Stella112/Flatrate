@@ -133,7 +133,9 @@ Median of the five today: **3.98 USD/GPU-hr** (sorted: 2.56, 3.976, 3.98, 3.99, 
 
 ## 7. Aurora Intents (step 8)
 
-Skipped: no `AURORA_INTENTS_API_KEY` supplied.
+Skipped in Phase 0: no `AURORA_INTENTS_API_KEY` supplied.
+
+2026-11-14: Maris set `AURORA_INTENTS_API_KEY` in Vercel. `POST https://intents-api.aurora.dev/api/quote/{apiKey}` (docs.intents.aurora.dev, Swap API reference "Request a quote"; `web/api/quote.js`) with the same dry-run request as 1Click answered HTTP 200: 100 USDC on Base -> 99.96565 USDC on NEAR, `timeEstimate` 35 s. Response through the site's proxy saved to `fixtures/aurora-quote.json` (the key is not in it).
 
 ## 8. Rust crates and sandbox (Phase 1)
 

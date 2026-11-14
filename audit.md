@@ -6,7 +6,7 @@ Date: 2026-11-14 (00:10 to about 09:30 UTC). Audited commit: `6724695` plus the 
 
 Every core feature in the product description runs on testnet. During this audit a fresh guest ran a whole market from the hosted site: account, roll, sealed bids, reveal, clearing, mint, Cover Note wrap and transfer, four attacks, settlement and redemption. The keeper and OutLayer handled the rest with no operator action. The read-only chain checks pass for both contracts.
 
-Fixed during the audit: the Proof page could not show any transaction (rate limiting); the keeper filled only every other slot; the sponsor gave guests far more NEAR than they need; the guest button stayed visible after funding. Not built, with reasons in BLOCKERS.md B12 and B13: enclave-cleared auction, Rhea trading, real mainnet payments, cross-chain value transfer. Still needs Maris: the Aurora key, the sponsor top-up, the market 10 reveal window, and the submission steps.
+Fixed during the audit: the Proof page could not show any transaction (rate limiting); the keeper filled only every other slot; the sponsor gave guests far more NEAR than they need; the guest button stayed visible after funding. Not built, with reasons in BLOCKERS.md B12 and B13: enclave-cleared auction, Rhea trading, real mainnet payments, cross-chain value transfer. Done since the first draft: the Aurora key is set (both quotes live) and the VPS keeper runs the new `keeper.mjs`. Still needs Maris: the sponsor top-up, the market 10 reveal window, and the submission steps.
 
 ## What was run
 
@@ -89,7 +89,7 @@ The same-slot button first said "No open market has a price for its current slot
 | No-wallet hosted demo | Done | sponsor tx `5qajZs4n…` |
 | Proof page and attack buttons | Done (fixed in this audit, see below) | |
 | TEE: Proof page shows OutLayer's attestation data | Done: wasm, input and output hashes checked per price; the TDX quote itself is not verified (stated in README) | |
-| NEAR Intents and Aurora quotes side by side | Partly: 1Click live; Aurora shows "Not configured on this deployment" because `AURORA_INTENTS_API_KEY` is not set in Vercel | `GET /api/quote` → `"aurora": false` |
+| NEAR Intents and Aurora quotes side by side | Done (key set during the audit): both live, side by side, labelled quote only | `GET /api/quote` → `"aurora": true`; `fixtures/aurora-quote.json` |
 | Verify command, claims table, scripted demo | Done; `make verify` passes on Linux with working network (see environment notes) | |
 | Demo market of 1-minute slots settling in about 15 minutes | Done: 3 + 2 minute auction, 8 one-minute slots, 13 minutes | market 14 |
 | One weekly market live through judging | WEEKLY market 10: two sealed bids committed; must be revealed 2026-11-14 11:32 to 23:32 UTC (`scripts/reveal-bids.sh`), then 28 six-hour slots to 2026-11-21 | |
@@ -117,8 +117,8 @@ Fixes 3 and 4 were built and type-checked locally (`npm run build`), and the 0.1
 | # | Item | Impact | Who |
 |---|---|---|---|
 | 1 | WEEKLY market 10 bids must be revealed between 2026-11-14 11:32 and 23:32 UTC | Without the reveal the weekly market opens with no pairs during judging | `scripts/reveal-bids.sh` on the machine with `target/market10-bids.txt` (running in this session) |
-| 2 | The server keeper still runs the old `keeper.mjs` until the VPS pulls this commit | DEMO markets get every other slot (still at least 3 of 8 unless OutLayer fails twice) | Maris: `git pull` on the VPS |
-| 3 | Aurora quote not configured | Pay page shows one quote of the two the description promises | Maris: `AURORA_INTENTS_API_KEY` in Vercel |
+| 2 | Done 2026-11-14 09:12 UTC: the VPS has the new `keeper.mjs` (`grep -c callNoWait` = 2; the folder is not a git checkout, so the file was fetched from GitHub). Its first log line in the new format comes with the next market period | — | Maris: confirm `included; result arrives by callback` in `~/flatrate-keeper.log` |
+| 3 | Done 2026-11-14: `AURORA_INTENTS_API_KEY` set in Vercel; the Pay page shows both quotes (100 USDC on Base -> 99.989665 via 1Click, 99.96565 via Aurora); `fixtures/aurora-quote.json` | — | — |
 | 4 | Sponsor balance 8.47 NEAR | At 0.1 NEAR per guest about 75 guests; then the site is read-only (scripted demo still works) | Maris: top up `flatrate-sponsor.testnet` from the faucet or the root account |
 | 5 | `tokens.flatrate-maris.testnet` still has a full-access key | The token market is not keyless (README says so) | Maris: "go keyless" if wanted |
 | 6 | Token WEEKLY market 11 has no bids | It will open and settle with no claims | Optional: seed bids before its commit end |
