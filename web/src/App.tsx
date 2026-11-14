@@ -150,6 +150,8 @@ function WalletPanel() {
   );
   const [sponsorMsg, setSponsorMsg] = useState<string | null>(null);
   const [sponsoring, setSponsoring] = useState(false);
+  const [sponsored, setSponsored] = useState(false);
+  useEffect(() => setSponsored(false), [guest.accountId]); // a new guest key starts unfunded
   const faucet = useAction();
 
   if (demo) return <div className="wallet mono">guest: (none in scripted demo)</div>;
@@ -168,7 +170,7 @@ function WalletPanel() {
           </span>
         )}
       </div>
-      {!isWallet && b && !b.exists && (
+      {!isWallet && b && !b.exists && !sponsored && (
         <div className="row">
           <button
             disabled={sponsoring}
@@ -178,7 +180,11 @@ function WalletPanel() {
               try {
                 const r = await sponsor(guest.accountId);
                 setSponsorMsg(r.message);
-                if (r.ok) setTimeout(() => refreshWallet(), 2500);
+                if (r.ok) {
+                  // Hide the button at once; the balance shows when a final-state read sees the account.
+                  setSponsored(true);
+                  for (const ms of [2500, 6000, 12000]) setTimeout(() => refreshWallet(), ms);
+                }
               } finally {
                 setSponsoring(false);
               }
@@ -186,7 +192,7 @@ function WalletPanel() {
           >
             {sponsoring ? "Creating…" : "Create guest account"}
           </button>
-          <small className="muted">Funded with 0.5 testnet NEAR and 100 fUSD by the sponsor. The key stays in this browser.</small>
+          <small className="muted">Funded with 0.1 testnet NEAR and 100 fUSD by the sponsor. The key stays in this browser.</small>
         </div>
       )}
       {b?.exists && (

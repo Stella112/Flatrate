@@ -168,7 +168,7 @@ export function forgetGuest(): void {
   }
 }
 
-/** Asks api/sponsor to fund the implicit account (0.5 NEAR + 100 fUSD). */
+/** Asks api/sponsor to fund the implicit account (0.1 NEAR + 100 fUSD). */
 export async function sponsor(accountId: string): Promise<{ ok: boolean; message: string; txs?: string[] }> {
   const res = await fetch("/api/sponsor", {
     method: "POST",

@@ -482,3 +482,10 @@ Base Sepolia tx: https://sepolia.basescan.org/tx/0xa9924054d5f471a131709ac2e8d5f
 status success, block 58426740, from 0xf8677ce5ebc12a0e396e2747e4917c7c6e2dbe61
 ```
 The recipient is the root account's derived address for the same path.
+
+
+## Audit (2026-11-14)
+Full results in [audit.md](audit.md). Summary:
+- Fresh guest on the hosted site ran DEMO market 14 end to end (roll, two sealed bids, reveal, keeper clear at 50c, refund, mint, wrap, note transfer, four attacks, keeper settle at average 3.8025 / Long 0.469531, redeem 15.30469 fUSD; the note's new holder redeemed 4.69531 fUSD). Guest NEAR spent: 0.0059.
+- Fresh clone of `6724695` in WSL: `make test` -> `test result: ok. 30 passed; 0 failed` (983 s); `make demo-scripted` -> `SCRIPTED DEMO PASS`; `make verify` all rows PASS except the two chain-check rows (WSL's Node `fetch` times out); `node scripts/verify-chain.mjs` from Windows passes for both contracts.
+- Fixed: Proof page transaction lookups (rate limited, `6724695`); keeper sends `request_observation` without waiting for OutLayer (tested on DEMO market 16); sponsor gives 0.1 NEAR instead of 0.5; guest button hides after funding; README names Autonomous Business.

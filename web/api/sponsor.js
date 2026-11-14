@@ -1,5 +1,5 @@
 // Vercel function (project Root Directory: web). POST /api/sponsor {"account_id": "<64 hex>"}
-// Creates the guest's implicit account by sending it 0.5 testnet NEAR, registers it on fUSD and
+// Creates the guest's implicit account by sending it 0.1 testnet NEAR, registers it on fUSD and
 // gives it 100 fUSD (the sponsor mints them from the public faucet and passes them on).
 // Env (set in the hosting provider, never in the repo): SPONSOR_ACCOUNT_ID, SPONSOR_PRIVATE_KEY.
 // Rate limit: 3 accounts per IP per hour, kept in this function instance's memory only, so it is
@@ -8,7 +8,9 @@ import { Account, JsonRpcProvider, actions } from "near-api-js";
 
 const RPC_URL = process.env.NEAR_RPC || "https://rpc.testnet.fastnear.com";
 const FUSD_ID = process.env.FUSD_ID || "fusd.flatrate-maris.testnet";
-const GUEST_NEAR = 500_000_000_000_000_000_000_000n; // 0.5 NEAR
+// 0.1 NEAR: a full market lifecycle from the site (roll, two commits, two reveals, refund, mint, wrap,
+// note transfer, four attack buttons, redeem) cost a guest 0.0059 NEAR on 2026-11-14 (audit.md).
+const GUEST_NEAR = 100_000_000_000_000_000_000_000n; // 0.1 NEAR
 const FUSD_REGISTRATION = 1_250_000_000_000_000_000_000n; // storage_balance_bounds on fUSD
 const GUEST_FUSD = "100000000"; // 100 fUSD
 const MIN_SPONSOR_BALANCE = 1_000_000_000_000_000_000_000_000n; // keep 1 NEAR
@@ -81,7 +83,7 @@ export default async function handler(req, res) {
     });
     const txs = [txHash(t1), txHash(t2)];
     if (failed(t2)) return res.status(502).json({ error: "Account created, but the fUSD gift failed. Use the faucet button.", txs });
-    return res.status(200).json({ message: `Guest account funded: 0.5 NEAR and 100 fUSD (tx ${txs.map((t) => t?.slice(0, 8)).join(", ")}).`, txs });
+    return res.status(200).json({ message: `Guest account funded: 0.1 NEAR and 100 fUSD (tx ${txs.map((t) => t?.slice(0, 8)).join(", ")}).`, txs });
   } catch (e) {
     return res.status(502).json({ error: `Sponsor error: ${e instanceof Error ? e.message : String(e)}` });
   }

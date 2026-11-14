@@ -7,8 +7,9 @@
 // One pass, for every market:
 //   - Auction past its reveal window      -> clear_auction
 //   - Open, inside its period             -> request_observation for the current slot if that slot
-//                                            has no price and no request in flight; one retry if
-//                                            the result was rejected (the slot is then free again)
+//                                            has no price and no request in flight (sent without
+//                                            waiting for OutLayer; a rejected result frees the slot
+//                                            and the next pass asks again)
 //   - Open, past its period               -> settle (when enough slots are filled, or once void_after passed)
 // and for each template in KEEPER_ROLL (default WEEKLY): roll_market when the latest is done.
 //
@@ -96,16 +97,41 @@ function call(method, args, gasTgas = 100) {
 
 const ev = (r, name) => r.events.find((e) => e.event === name);
 
+/**
+ * Signs one call with near-cli (no send) and broadcasts it, returning once it is included in a block.
+ * Used for request_observation, whose result arrives through yield/resume one to two minutes later:
+ * waiting for it made each keeper pass outlast the one-minute cron, so every other slot was skipped.
+ */
+async function callNoWait(method, args, gasTgas = 100) {
+  const r = spawnSync(
+    "near",
+    [
+      "contract", "call-function", "as-transaction", FLATRATE_ID, method, "json-args", JSON.stringify(args),
+      "prepaid-gas", `${gasTgas} Tgas`, "attached-deposit", "0 NEAR",
+      "sign-as", ACCOUNT, "network-config", "testnet", "sign-with-legacy-keychain", "display",
+    ],
+    { encoding: "utf8", input: "" },
+  );
+  const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+  const signed = out.split("\n").map((l) => l.trim()).find((l) => /^[A-Za-z0-9+/]{100,}={0,2}$/.test(l));
+  if (!signed) return { tx: undefined, err: out.split("\n").filter(Boolean).slice(-2).join(" ") };
+  const res = await fetch(RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "keeper", method: "send_tx", params: { signed_tx_base64: signed, wait_until: "INCLUDED" } }),
+  });
+  const body = await res.json();
+  const tx = body.result?.transaction?.hash;
+  const err = body.error ? JSON.stringify(body.error).match(/ERR_[A-Z_]+/)?.[0] || JSON.stringify(body.error).slice(0, 200) : null;
+  return { tx, err };
+}
+
 async function observe(m) {
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const s = await view("slot_info", { market_id: m.id });
-    if (s.current_slot === null || s.current_filled || s.current_pending) return;
-    const r = call("request_observation", { market_id: m.id }, 300);
-    const rec = ev(r, "observation_recorded");
-    const rej = ev(r, "observation_rejected");
-    log(`market ${m.id} slot ${s.current_slot}: tx ${r.tx} ${rec ? `recorded ${rec.data[0].price_micros} (OutLayer ${rec.data[0].outlayer_request})` : rej ? `rejected: ${rej.data[0].reason}` : r.err || "no event"}`);
-    if (!rej) return; // recorded, or failed before OutLayer: do not retry
-  }
+  // One request per pass. A rejected or failed result frees the slot, so the next pass asks again.
+  const s = await view("slot_info", { market_id: m.id });
+  if (s.current_slot === null || s.current_filled || s.current_pending) return;
+  const r = await callNoWait("request_observation", { market_id: m.id }, 300);
+  log(`market ${m.id} slot ${s.current_slot}: request_observation tx ${r.tx || "-"} ${r.err || "included; result arrives by callback"}`);
 }
 
 async function pass() {

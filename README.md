@@ -8,7 +8,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 
 ## Try it
 
-1. Open **https://flatrate-gpu.vercel.app/**. Click "Create guest account": the page makes a key in your browser and a sponsor sends 0.5 testnet NEAR and 100 fUSD to its account. No wallet needed.
+1. Open **https://flatrate-gpu.vercel.app/**. Click "Create guest account": the page makes a key in your browser and a sponsor sends 0.1 testnet NEAR and 100 fUSD to its account. No wallet needed.
 2. Open a DEMO market. If the latest one is settled, click "Roll the next DEMO market" (anyone can): a new market opens with its band centred on the last settled average. Commit a sealed bid within 3 minutes, reveal within the next 2, then clear. The keeper fills one price per 1-minute slot for 8 minutes; settle and redeem after that.
 3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract.
 4. Open **https://flatrate-gpu.vercel.app/?demo=scripted** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
@@ -68,6 +68,7 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 - **Unstoppable DeFi**: a fully collateralised two-sided market with no admin price setting, no admin settlement override and public market rolling.
 - **NFTs That Do Something**: a Cover Note is a transferable claim on a future payout; whoever holds it at settlement is paid.
 - **Agent Economy**: `scripts/agent/hedge-agent.mjs` reads a usage forecast, sizes a Long hedge (GPU-hours x band x hedge ratio), prices it from the last settled average, and runs the auction to redemption on its own account. It hedged DEMO market 13 on testnet.
+- **Autonomous Business**: the contract has no access keys; markets are rolled, cleared, priced and settled by public calls. A keeper holding only a function-call key runs them, and anyone can run the same keeper. DEMO market 14 was rolled by a fresh guest and cleared, priced and settled by the keeper with no operator action.
 - **Privacy & Private AI**: bids stay sealed until the reveal window, and prices come from a pinned program run by OutLayer in a TEE, with an attestation per price.
 
 ## Run the checks
@@ -96,7 +97,7 @@ make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; 
 - **The contract does not verify a TEE attestation itself.** It trusts the OutLayer contract and the pinned code version. The Proof page and `make verify` fetch OutLayer's attestation record for each price and compare its wasm, input and output hashes, but do not verify the TDX quote. OutLayer's governance still runs on keys its operators hold (near-outlayer `docs/NON_CUSTODIAL.md`). Intel TDX itself has had published attacks, for example TDXdown (Wilke, Sieck, Eisenbarth, ACM CCS 2024, https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/). OutLayer's testnet also had an outage during our first DEMO market (BLOCKERS.md B10); a market without enough slots settles void.
 - **No upgrades.** The contract's keys are deleted, so a bug cannot be fixed; if a price source changes its format, markets settle at the midpoint until a new contract is deployed. The previous version was replaced in place on 2026-11-13 with a `reset` init, before the keys were deleted (the old markets stay on the explorer only).
 - **Paying from another chain is a quote only.** 1Click and Aurora have no testnet; quotes are mainnet prices and nothing is sent. 1Click's quote endpoint timed out at times during the build.
-- **Sponsored guest accounts.** The sponsor pays 0.5 testnet NEAR per guest; its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
+- **Sponsored guest accounts.** The sponsor pays 0.1 testnet NEAR per guest (a full market lifecycle cost a guest 0.0059 NEAR); its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
 - **Rhea.** `ref-finance-101.testnet` is live on testnet (2961 pools), but no Flatrate pool exists: the Rhea extra is not built.
 - **The agent's commit key is full-access.** A bid is committed through fUSD `ft_transfer_call`, which needs 1 yoctoNEAR attached, and NEAR function-call keys cannot attach a deposit (BLOCKERS.md B11). The agent therefore commits with a full-access key on its own account; its limit is the fUSD it holds and `max_spend_fusd` per bid. Every other agent call uses the flatrate-only key. The contract is keyless, so a deposit-free commit path cannot be added.
 - **Token-price index has one upstream.** All seven prices come from one OpenRouter endpoint, so OpenRouter is a single point of trust for that index; the H100 index uses five separate APIs. The token contract still has its full-access key.
