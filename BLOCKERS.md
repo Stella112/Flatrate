@@ -110,3 +110,10 @@ Following `docs/Flatrate-full-description-v2.md` ("The slower sandbox tests run 
 - The description's extra "cross-chain pay-in and payout on test networks" would move test dollars between Base Sepolia and NEAR. That needs a relayer that watches one chain and credits the other: a bridge we write ourselves (CLAUDE.md "Out of scope") with an operator (against "no operator"). Maris chose the reduced version.
 - Built instead: `scripts/chainsig/sepolia.mjs`. A NEAR testnet account controls a Base Sepolia address through NEAR's MPC signer `v1.signer-prod.testnet` and signs a real Base Sepolia transfer from it. No fUSD or claim crosses chains.
 - Funding the Base Sepolia address needs a faucet with a captcha or login, so Maris funds it once.
+
+- Update 2026-11-14: extras 3 (enclave-cleared auction) and 4 (Rhea) are now built on a third deployment, `sealed.flatrate-maris.testnet`, with a `claim_transfer_call` path and a claim-token contract (PROGRESS.md "Private auction and Rhea"). Extra 5 (mainnet) is still not built.
+
+## B14: OutLayer testnet failed every execution on 2026-11-14 (from about 09:15 UTC)
+- Every `request_execution` returned "Execution promise failed: Failed", for the auction enclave (`pubkey` and `clear`, called directly and through the contract) and for the token-price oracle that worked the day before; `GET https://testnet-api.outlayer.ai/health` answered `ok`. Last success before it: H100 DEMO market 17, request 43790 at 09:02 UTC. Failed examples: requests 45203 (contract clear, [GrzKXuvM](https://testnet.nearblocks.io/txns/GrzKXuvMqk7NUvgR9UkgcKY6HnkT4kkn3sHtk6Y5pCCN)) and those in `scratchpad` watcher runs at 12:52, 12:58, 13:05 UTC.
+- Effect: the private auction's enclave clearing could not run on testnet; sealed market 10 was abandoned and refunded. Price slots during the outage stay empty; a market without enough slots settles void at 0.50 / 0.50.
+- The keeper now waits 10 minutes between clear attempts on a market (`CLEAR_RETRY_MIN`), so an outage does not drain its allowance.

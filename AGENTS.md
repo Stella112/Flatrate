@@ -28,6 +28,7 @@ Where things are:
 | Oracle component | `oracle/src/lib.rs`, `oracle/src/main.rs` |
 | Read-only testnet checks | `scripts/verify-chain.mjs` |
 | Token-price index (extra 2) | `oracle-tokens/`, `scripts/deploy-tokens.sh`, contract `tokens.flatrate-maris.testnet`; `make verify` rows prefixed `[tokens]` |
+| Private auction and Rhea (extras) | `auction-enclave/`, `contracts/claim-token/`, `contracts/flatrate/tests/private_and_tokens.rs` (`make test-enclave`), `scripts/seal-bid.mjs`, `scripts/rhea-pool.sh`; contract `sealed.flatrate-maris.testnet`; `make verify` rows prefixed `[sealed]` |
 | Wallet login (extra 6) | `web/src/wallet.ts` |
 | Hedging agent (extra) | `scripts/agent/` (planning in `plan.mjs`, runner in `hedge-agent.mjs`); run on DEMO market 13 in `PROGRESS.md` "Extra 1" |
 | Site and serverless functions | `web/src`, `web/api` |
