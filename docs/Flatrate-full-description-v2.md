@@ -146,7 +146,6 @@ Day-one checks, before any code:
 •☐ NEAR Intents quote: one dry-run quote returns.
 •☐ Aurora Intents: API key created at portal.intents.aurora.dev; one quote returns.
 Deadline: development closes on 14 November 2026 at 23:59 UTC. The repository must be public by then. Features freeze on the evening of 13 November.
-Second entry: Maris is also submitting Facedown (Stella112/facedown), a separate project. If the official rules confirm that two projects per person are allowed, each README names the other.
 Known limitations
 •Testnet only. Collateral is a test stablecoin with a public faucet. No real money is at risk or earned.
 •No real counterparties yet. Both sides of the demo markets are seeded by us.

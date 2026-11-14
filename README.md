@@ -4,8 +4,6 @@ Flatrate lets AI teams and agents lock next week's GPU price on NEAR testnet. A 
 
 A second deployment of the same contract (extra 2) runs markets on an LLM token price instead: Llama 3.3 70B output tokens, USD per 1M, the median across seven OpenRouter providers. The site switches between the two with the "H100 GPU-hour" / "LLM tokens" buttons.
 
-Other submission by the same builder: **Facedown**, https://github.com/Stella112/facedown
-
 ![Landing page: lock next week's AI compute bill](docs/screens/landing.jpg)
 
 ## What is real, and what is not

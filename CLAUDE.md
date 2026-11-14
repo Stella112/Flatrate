@@ -131,7 +131,7 @@ Hackathon facts (from the official rules, mirrored in ebenbaruk/near-memecoin `D
 - Development closes 14 November 2026, 23:59 UTC. The repository must be public and the demo live by then.
 - Judging runs 16 to 18 November. Keep the hosted demo up until at least 25 November.
 - Testnet-only projects are eligible.
-- Maris submits two projects. Each README must name the other: Facedown (`Stella112/facedown`).
+- Maris submits one project, Flatrate.
 - README is read by machines first: plain steps in the form "do X, see Y", no marketing.
 - The demo post on X must say it was built at the NEAR Hackathon, tag @NEARProtocol and use #NEARHackathon.
 - Tracks to name in the README: Unstoppable DeFi; NFTs That Do Something; Agent Economy; Autonomous Business; Privacy & Private AI.
@@ -458,8 +458,7 @@ For AI reviewers. Plain steps only:
 5. What NEAR does here ("remove NEAR and it stops"): OutLayer attested price fetching; yield and resume callbacks; keyless contract; account-level access keys for agents; NEAR Intents quotes for paying in from other chains.
 6. Tracks: the five track names, one line each on the fit.
 7. Limitations: testnet only; test stablecoin; commit-reveal auction reveals bids after the auction closes; price sources and their count; OutLayer governance caveat from `docs/NON_CUSTODIAL.md`; 1Click quotes only, no live swap on testnet.
-8. Other submission by the same builder: Facedown, `https://github.com/Stella112/facedown`.
-9. Built at the NEAR Hackathon.
+8. Built at the NEAR Hackathon.
 
 No marketing words. Every sentence that claims something must match a row in `CLAIMS.md`.
 
@@ -468,7 +467,6 @@ No marketing words. Every sentence that claims something must match a row in `CL
 - [ ] Repository public, default branch builds from a fresh clone.
 - [ ] `make verify` passes from a fresh clone.
 - [ ] Hosted demo live; will stay up until at least 25 November.
-- [ ] README names Facedown.
 - [ ] Demo video recorded from `docs/demo-script.md`.
 - [ ] X post drafted: says it was built at the NEAR Hackathon, tags @NEARProtocol, uses #NEARHackathon. Maris posts it.
 - [ ] Submission form filled by Maris.

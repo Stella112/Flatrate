@@ -489,10 +489,6 @@ export function Landing() {
             ·{" "}
             <a href={`${REPO}/blob/main/README.md`} target="_blank" rel="noreferrer">
               README
-            </a>{" "}
-            ·{" "}
-            <a href="https://github.com/Stella112/facedown" target="_blank" rel="noreferrer">
-              Also by the builder: Facedown
             </a>
           </span>
         </div>
