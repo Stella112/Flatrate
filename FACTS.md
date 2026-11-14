@@ -255,3 +255,24 @@ Checked by fetching each page; claims without a source were removed from `docs/F
 | `chainsig.js` 1.1.16: `new contracts.ChainSignatureContract({networkId, contractId})`, `new chainAdapters.evm.EVM({publicClient, contract})`, `deriveAddressAndPublicKey(account, path)`, `prepareTransactionForSigning`, `contract.sign({payloads, path, keyType: "Ecdsa", signerAccount})`, `finalizeTransactionSigning`, `broadcastTx` (the README's `contracts.near.*` and `sign({payload, key_version})` are out of date) | `scripts/chainsig/node_modules/chainsig.js/node/index.d.ts` |
 | Base Sepolia RPC `https://sepolia.base.org` (viem `baseSepolia`) | run below |
 | holder, path `flatrate-payout` -> `0xF8677CE5ebc12A0E396e2747e4917C7C6E2dBe61`; root, same path -> `0x701cbB65Bd7386222F76b27B4CF62666d950660E` | `sepolia.mjs address` |
+
+## 16. Private auction: OutLayer signing keys (2026-11-14)
+
+| Fact | Source |
+|---|---|
+| A module declares keys in an `outlayer.manifest` custom section of its wasm; `signing_keys: [{path, type: "ed25519", caller, bind}]`; `bind: "project"` (default) needs a run through a project whose version is a `WasmUrl` | `vendor/near-outlayer/wasi-examples/CONNECTOR_MANIFEST.md` "signing_keys" (lines 154-370); `signing-key-probe/src/main.rs:93-102` |
+| `caller: "predecessor"`: the key belongs to the account that called `outlayer.testnet` (a contract, when a contract relays the call) | `CONNECTOR_MANIFEST.md:208`, `signing-key-probe/wit/signing-keys.wit` (copied to `auction-enclave/wit/`) |
+| Host functions `public-key(path, vault)` and `sign(path, vault, message)`; the module never sees the private key | `wit/signing-keys.wit:107-121` |
+| `wit-bindgen` 0.36 (the probe's pin); `crypto_box` 0.9 (`SalsaBox`, NaCl box: X25519 + XSalsa20-Poly1305); `tweetnacl` 1.0.3 in the browser (already in `web/node_modules` through near-api-js) | `signing-key-probe/Cargo.toml`; `cargo search crypto_box`; `npm ls tweetnacl` |
+| Testnet issues these keys: `outlayer run flatrate-maris.testnet/flatrate-auction '{"op":"pubkey"}'` twice (requests 44011 and 44014, txs `9e5fyWt5dqpfEJAG5uteagDjF2c1wXdQBQEwaaqqRnWJ`, `9q9rVZzvKeZ9Uv2gks6dv57ZGxLvmUBwir38sRmc6SU6`) returned the same X25519 key `04574ac6…` (caller: the root account) | CLI output |
+| Through the contract (`request_enclave_key`, tx `GjkYcbU6dXeYfCyd2oWKuDPGFDGv1cjT7CqdV6yc8Q7V`) the key is `78f5091a8a40811523e59a2ea570c4b9d2cef7e4f1510d446f59a73b03c1eb08`: another key, because the predecessor is `sealed.flatrate-maris.testnet` | `enclave_key_set` event |
+| Enclave wasm: `outlayer upload` -> `https://test.fastfs.io/flatrate-maris.testnet/outlayer.testnet/940f44d745f2e91508717a68055eb43d1cb788cacde0acb563562aeebe74d004.wasm`; `outlayer deploy flatrate-auction <url>` -> project `flatrate-maris.testnet/flatrate-auction` (uuid `p0000000000000189` in OutLayer's log) | CLI output; tx logs |
+
+## 17. Rhea (Ref) exchange on testnet (2026-11-14)
+
+| Fact | Source |
+|---|---|
+| `ref-finance-101.testnet` `metadata`: version 1.9.19, state Running, 2975 pools before ours | RPC view call |
+| The exchange contract's source is no longer public under the `ref-finance` or `rhea-finance` GitHub organisations (`ref-finance/ref-contracts` answers 404); the call shapes below come from `ref-finance/docs` (commit `04d8844`) | GitHub API |
+| `storage_deposit` (0.1 NEAR), `register_tokens({token_ids})` for tokens outside the global whitelist (fUSD and claim tokens are outside it), token `storage_deposit` for the exchange, deposit by `ft_transfer_call(exchange, amount, msg: "")`, `add_simple_pool({tokens, fee})` with ~0.1 NEAR, `add_liquidity({pool_id, amounts})`, `swap({actions: [{pool_id, token_in, amount_in, token_out, min_amount_out}]})`, `withdraw({token_id, amount})`, views `get_pool`, `get_return`, `get_deposits` | `vendor/ref-docs/cli-usage.md`, `vendor/ref-docs/contracts/ref-exchange.md` |
+| Pool 2976: `SIMPLE_POOL`, tokens `frl10.flatrate-maris.testnet` / `fusd.flatrate-maris.testnet`, fee 25 bps (tx `A9RwYuDSQLJo7gfkxe2hv9suoUVmwoBy89aZ9hagQSut`, returned `2976`) | `get_pool {"pool_id": 2976}` |

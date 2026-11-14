@@ -58,6 +58,8 @@ export type Bid = {
   revealed: { side: Side; qty: string; limit_cents: number } | null;
   filled_qty: string;
   cost: string;
+  /** Private auction: the sealed bid as committed. */
+  ciphertext?: string | null;
 };
 
 export type TemplateConfig = {
@@ -83,6 +85,9 @@ export type Config = {
   observation_budget: string;
   next_pending_id: string;
   next_market_id: string;
+  /** Private-auction contracts only. */
+  enclave?: { project_id: string; version_key: string } | null;
+  enclave_pubkey?: string | null;
 };
 
 export type NftToken = {

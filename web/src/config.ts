@@ -10,11 +10,13 @@ export const EXPLORER_ACCOUNT = "https://testnet.nearblocks.io/address/";
 
 /** One Flatrate contract per index (extra 2 deployed the same contract for LLM token prices). */
 export type IndexInfo = {
-  key: "h100" | "tokens";
+  key: "h100" | "tokens" | "sealed";
   contractId: string;
   name: string; // nav label
   unit: string; // what one price is
   sources: string; // where prices come from
+  /** Bids are sealed to an OutLayer enclave key and cleared inside the enclave (no reveal step). */
+  privateAuction?: boolean;
 };
 export const INDEXES: IndexInfo[] = [
   {
@@ -30,6 +32,14 @@ export const INDEXES: IndexInfo[] = [
     name: "LLM tokens",
     unit: "USD per 1M output tokens of Llama 3.3 70B",
     sources: "OpenRouter's public price list for Llama 3.3 70B, one price per provider (seven providers)",
+  },
+  {
+    key: "sealed",
+    contractId: "sealed.flatrate-maris.testnet",
+    name: "H100 private auction",
+    unit: "USD per H100 GPU-hour",
+    sources: "five public GPU price APIs (Akash, Vast.ai, RunPod, Shadeform, Verda)",
+    privateAuction: true,
   },
 ];
 /** `?index=tokens` picks the token-price contract; scripted demo mode always replays the H100 market. */

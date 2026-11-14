@@ -2,9 +2,9 @@
 # on Windows run these inside WSL).
 SHELL := /bin/bash
 WASM_DIR := target/wasm
-CONTRACTS := fusd mock-outlayer flatrate
+CONTRACTS := fusd mock-outlayer flatrate claim-token
 
-.PHONY: build test test-shared test-unit test-oracle test-sandbox oracle-wasm oracle-repro oracle-runner vendor verify demo-scripted keeper test-agent agent agent-dry clean-wasm
+.PHONY: build test test-enclave test-shared test-unit test-oracle test-sandbox oracle-wasm oracle-repro oracle-runner vendor verify demo-scripted keeper test-agent agent agent-dry clean-wasm
 
 ## Build all contract wasm files into target/wasm with cargo-near.
 build:
@@ -23,6 +23,11 @@ test-shared:
 test-unit:
 	cargo test -p fusd --lib
 	cargo test -p flatrate --lib
+	cargo test -p claim-token --lib
+
+## Private-auction enclave component: sealing, opening and clearing (native, no network).
+test-enclave:
+	cd auction-enclave && cargo test
 
 ## Oracle parsing and median against fixtures/prices (native, no network).
 test-oracle:
@@ -36,9 +41,10 @@ oracle-wasm:
 ## near-workspaces sandbox tests (needs `make build` first).
 test-sandbox: build
 	cargo test -p flatrate --test sandbox -- --test-threads=1 --nocapture
+	cargo test -p flatrate --test private_and_tokens -- --test-threads=1 --nocapture
 
 ## Everything that runs locally without network writes or keys.
-test: test-shared test-unit test-oracle test-sandbox
+test: test-shared test-unit test-oracle test-enclave test-sandbox
 
 ## OutLayer sources (build script and test runner), pinned to the commit read in Phase 0.
 vendor:

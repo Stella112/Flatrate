@@ -47,6 +47,15 @@ const FIRST_MARKET_ID: u64 = 10;
 const FIRST_NOTE_ID: u64 = 1000;
 /// 10 cents in micro-USD: rolled bands are rounded down to this step.
 const TEN_CENTS: u64 = 100_000;
+/// Static gas for `on_enclave_result` (applies up to `MAX_BIDS` fills).
+const GAS_ON_ENCLAVE: Gas = Gas::from_tgas(80);
+/// Largest enclave result we read, in bytes.
+const MAX_ENCLAVE_OUTPUT: usize = 32_768;
+/// Largest sealed bid accepted, base64 characters (a bid plaintext is under 200 bytes).
+pub const MAX_CIPHERTEXT_B64: usize = 1024;
+/// Gas for the receiver of `claim_transfer_call` and for its resolve step.
+const GAS_ON_CLAIM_TRANSFER: Gas = Gas::from_tgas(30);
+const GAS_RESOLVE_CLAIM_TRANSFER: Gas = Gas::from_tgas(15);
 
 // Storage prefixes. Byte strings distinct from the previous state's enum prefixes, so a reset
 // in place never reads old data.
@@ -63,6 +72,59 @@ const P_NFT_OWNERS: &[u8] = b"n2o";
 const P_NFT_META: &[u8] = b"n2m";
 const P_NFT_ENUM: &[u8] = b"n2e";
 const P_NOTES: &[u8] = b"n2n";
+const P_CIPHERTEXTS: &[u8] = b"x2c";
+const P_ENCLAVE_PENDING: &[u8] = b"x2p";
+const P_CLEARING: &[u8] = b"x2r";
+
+/// The OutLayer project that clears private auctions (extra: private auction). Fixed at init.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct EnclaveConfig {
+    pub project_id: String,
+    pub version_key: String,
+}
+
+/// An enclave request in flight.
+#[near(serializers = [borsh])]
+#[derive(Clone, Debug)]
+pub enum EnclavePending {
+    /// Ask the enclave for its X25519 public key.
+    Key,
+    /// Clear the private auction of this market.
+    Clear { market_id: u64 },
+}
+
+/// One filled bid as the enclave reports it.
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct EnclaveFill {
+    pub index: u32,
+    pub side: Side,
+    pub filled_qty: u64,
+}
+
+/// JSON printed by the auction enclave (`auction-enclave/src/main.rs`).
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct EnclaveOutput {
+    pub op: String,
+    #[serde(default)]
+    pub x25519_pubkey: Option<String>,
+    #[serde(default)]
+    pub market_id: Option<String>,
+    #[serde(default)]
+    pub price_cents: Option<u8>,
+    #[serde(default)]
+    pub matched: Option<u64>,
+    #[serde(default)]
+    pub fills: Vec<EnclaveFill>,
+    #[serde(default)]
+    pub valid: Option<u32>,
+    #[serde(default)]
+    pub invalid: Option<u32>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -268,6 +330,10 @@ pub struct ConfigView {
     pub observation_budget: U128,
     pub next_pending_id: U64,
     pub next_market_id: U64,
+    /// Set when this contract runs private (enclave-cleared) auctions.
+    pub enclave: Option<EnclaveConfig>,
+    /// X25519 public key (hex) that bids are encrypted to, as the enclave returned it.
+    pub enclave_pubkey: Option<String>,
 }
 
 /// One source's result in the oracle output.
@@ -301,6 +367,9 @@ pub enum TransferMsg {
     MintPair { market_id: U64 },
     /// `hash`: 64 hex characters, see `Bid`.
     CommitBid { market_id: U64, hash: String },
+    /// Private auction: `ciphertext` is base64(ephemeral X25519 key || nonce || NaCl box) of
+    /// `{"market_id","bidder","side","qty","limit_cents"}`, sealed to `enclave_pubkey`.
+    CommitSealed { market_id: U64, ciphertext: String },
 }
 
 #[near(serializers = [borsh])]
@@ -345,6 +414,8 @@ pub struct BidView {
     pub revealed: Option<RevealedBid>,
     pub filled_qty: U64,
     pub cost: U128,
+    /// Private auction: the sealed bid as committed (only the enclave can open it).
+    pub ciphertext: Option<String>,
 }
 
 /// Claims held inside a Cover Note NFT. They pay whoever owns the token at redemption.
@@ -475,6 +546,16 @@ pub struct Contract {
     tokens: NonFungibleToken,
     notes: LookupMap<TokenId, Note>,
     next_note_id: u64,
+    /// Private auctions (extra): the clearing project, its key, sealed bids, requests in flight.
+    enclave: Option<EnclaveConfig>,
+    enclave_pubkey: Option<String>,
+    /// (market_id, bid index) -> sealed bid.
+    ciphertexts: LookupMap<(u64, u32), String>,
+    enclave_pending: LookupMap<u64, EnclavePending>,
+    /// market_id -> pending id of its clearing request.
+    clearing: LookupMap<u64, u64>,
+    /// Pending id of the key request, if one is in flight.
+    key_pending: Option<u64>,
 }
 
 #[near]
@@ -493,8 +574,12 @@ impl Contract {
         weekly_template: TemplateConfig,
         observation_deposit: U128,
         index: Option<IndexId>,
+        enclave: Option<EnclaveConfig>,
     ) -> Self {
         require!(!oracle_version_key.is_empty(), "ERR_EMPTY_VERSION");
+        if let Some(e) = &enclave {
+            require!(!e.project_id.is_empty() && !e.version_key.is_empty(), "ERR_BAD_ENCLAVE");
+        }
         require!(oracle_sources.len() >= MIN_SOURCES_OK as usize, "ERR_TOO_FEW_SOURCES");
         require!(observation_deposit.0 > 0, "ERR_ZERO_DEPOSIT");
         for t in [&demo_template, &weekly_template] {
@@ -528,6 +613,12 @@ impl Contract {
             bids: LookupMap::new(P_BIDS),
             bid_index: LookupMap::new(P_BID_INDEX),
             refunds: LookupMap::new(P_REFUNDS),
+            enclave,
+            enclave_pubkey: None,
+            ciphertexts: LookupMap::new(P_CIPHERTEXTS),
+            enclave_pending: LookupMap::new(P_ENCLAVE_PENDING),
+            clearing: LookupMap::new(P_CLEARING),
+            key_pending: None,
         }
     }
 
@@ -549,10 +640,11 @@ impl Contract {
         weekly_template: TemplateConfig,
         observation_deposit: U128,
         index: Option<IndexId>,
+        enclave: Option<EnclaveConfig>,
     ) -> Self {
         Self::new(
             owner_id, fusd_id, outlayer_id, oracle_project_id, oracle_version_key, oracle_sources, resource_limits,
-            demo_template, weekly_template, observation_deposit, index,
+            demo_template, weekly_template, observation_deposit, index, enclave,
         )
     }
 
@@ -639,13 +731,27 @@ impl Contract {
     // ---------- sealed opening auction ----------
 
     fn internal_commit_bid(&mut self, market_id: u64, bidder: &AccountId, escrow: u128, hash: &str) {
+        require!(self.enclave.is_none(), "ERR_PRIVATE_AUCTION");
+        let hash = hex_decode_32(hash).unwrap_or_else(|| env::panic_str("ERR_BAD_HASH"));
+        self.store_bid(market_id, bidder, escrow, hash);
+    }
+
+    /// Private auction: stores a bid sealed to the enclave key. Only the enclave can open it.
+    fn internal_commit_sealed(&mut self, market_id: u64, bidder: &AccountId, escrow: u128, ciphertext: &str) {
+        require!(self.enclave.is_some(), "ERR_NOT_PRIVATE");
+        require!(self.enclave_pubkey.is_some(), "ERR_NO_ENCLAVE_KEY");
+        require!(!ciphertext.is_empty() && ciphertext.len() <= MAX_CIPHERTEXT_B64, "ERR_BAD_CIPHERTEXT");
+        let index = self.store_bid(market_id, bidder, escrow, env::sha256_array(ciphertext.as_bytes()));
+        self.ciphertexts.insert((market_id, index), ciphertext.to_string());
+    }
+
+    fn store_bid(&mut self, market_id: u64, bidder: &AccountId, escrow: u128, hash: [u8; 32]) -> u32 {
         let mut m = self.market(market_id);
         require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
         let now = env::block_timestamp();
         require!(now < m.auction_commit_end, "ERR_COMMIT_ENDED");
         require!(escrow > 0, "ERR_ZERO_AMOUNT");
         require!(m.bid_count < MAX_BIDS, "ERR_TOO_MANY_BIDS");
-        let hash = hex_decode_32(hash).unwrap_or_else(|| env::panic_str("ERR_BAD_HASH"));
         let key = (market_id, bidder.clone(), hash);
         require!(!self.bid_index.contains_key(&key), "ERR_DUPLICATE_COMMIT");
         let index = m.bid_count;
@@ -660,11 +766,13 @@ impl Contract {
             "bid_committed",
             json!({"market_id": U64(market_id), "index": index, "bidder": bidder, "escrow": U128(escrow), "hash": hex_encode(&hash)}),
         );
+        index
     }
 
     /// During the reveal window. Opens the caller's commitment; valid only if the hash matches
     /// and the escrow covers `qty x limit_cents x 10_000`.
     pub fn reveal_bid(&mut self, market_id: U64, side: Side, qty: U64, limit_cents: u8, salt: String) {
+        require!(self.enclave.is_none(), "ERR_PRIVATE_AUCTION");
         let m = self.market(market_id.0);
         require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
         let now = env::block_timestamp();
@@ -693,7 +801,18 @@ impl Contract {
     /// Anyone, after the reveal window. Uniform-price clearing (`flatrate_shared::clear_auction`):
     /// matched bids get claims, every unused escrow (including unrevealed bids) is credited to
     /// the bidder's refund balance, and the market opens with the opening price recorded.
-    pub fn clear_auction(&mut self, market_id: U64) {
+    ///
+    /// On a private-auction contract the bids are sealed: after the commit window this sends them
+    /// to the enclave project and the result comes back through `on_enclave_result`.
+    pub fn clear_auction(&mut self, market_id: U64) -> PromiseOrValue<bool> {
+        if self.enclave.is_some() {
+            return self.clear_private(market_id.0);
+        }
+        self.clear_public(market_id);
+        PromiseOrValue::Value(true)
+    }
+
+    fn clear_public(&mut self, market_id: U64) {
         let mut m = self.market(market_id.0);
         require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
         require!(env::block_timestamp() >= m.auction_reveal_end, "ERR_REVEAL_NOT_ENDED");
@@ -747,6 +866,223 @@ impl Contract {
             json!({"market_id": market_id, "price_cents": c.price_cents, "matched": U128(minted),
                    "bids": m.bid_count, "revealed": revealed.len()}),
         );
+        self.save(m);
+    }
+
+    // ---------- private auction (extra): bids sealed to an OutLayer enclave ----------
+
+    /// Anyone, once: asks the enclave project for the X25519 key bids are sealed to. The key is
+    /// derived inside the enclave from an OutLayer signing key bound to this contract (the
+    /// predecessor) and the project, so only this contract's runs can open the bids.
+    pub fn request_enclave_key(&mut self) -> Promise {
+        require!(self.enclave.is_some(), "ERR_NOT_PRIVATE");
+        require!(self.enclave_pubkey.is_none(), "ERR_KEY_ALREADY_SET");
+        require!(self.key_pending.is_none(), "ERR_KEY_PENDING");
+        let id = self.new_enclave_request(EnclavePending::Key);
+        self.key_pending = Some(id);
+        emit("enclave_key_requested", json!({"pending_id": U64(id), "caller": env::predecessor_account_id()}));
+        self.enclave_call(json!({"op": "pubkey"}).to_string(), id)
+    }
+
+    fn clear_private(&mut self, market_id: u64) -> PromiseOrValue<bool> {
+        let mut m = self.market(market_id);
+        require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
+        require!(env::block_timestamp() >= m.auction_commit_end, "ERR_COMMIT_NOT_ENDED");
+        require!(!self.clearing.contains_key(&market_id), "ERR_CLEARING_PENDING");
+        if m.bid_count == 0 {
+            m.status = MarketStatus::Open;
+            emit("auction_cleared", json!({"market_id": U64(market_id), "price_cents": null, "matched": U128(0), "bids": 0, "private": true}));
+            self.save(m);
+            return PromiseOrValue::Value(true);
+        }
+        let bids: Vec<serde_json::Value> = (0..m.bid_count)
+            .map(|i| {
+                let b = self.bids.get(&(market_id, i)).cloned().unwrap();
+                json!({"index": i, "bidder": b.bidder, "escrow": b.escrow.to_string(),
+                       "ciphertext": self.ciphertexts.get(&(market_id, i)).cloned().unwrap_or_default()})
+            })
+            .collect();
+        let input = json!({"op": "clear", "market_id": market_id.to_string(), "bids": bids}).to_string();
+        let id = self.new_enclave_request(EnclavePending::Clear { market_id });
+        self.clearing.insert(market_id, id);
+        emit("auction_clear_requested", json!({"market_id": U64(market_id), "pending_id": U64(id), "bids": m.bid_count}));
+        PromiseOrValue::Promise(self.enclave_call(input, id))
+    }
+
+    fn new_enclave_request(&mut self, kind: EnclavePending) -> u64 {
+        require!(self.budget() >= self.observation_deposit.as_yoctonear(), "ERR_NO_BUDGET");
+        let id = self.next_pending_id;
+        self.next_pending_id += 1;
+        self.enclave_pending.insert(id, kind);
+        id
+    }
+
+    fn enclave_call(&self, input: String, pending_id: u64) -> Promise {
+        let e = self.enclave.clone().unwrap();
+        let args = json!({
+            "source": {"Project": {"project_id": e.project_id, "version_key": e.version_key}},
+            "resource_limits": {
+                "max_instructions": self.resource_limits.max_instructions.0,
+                "max_memory_mb": self.resource_limits.max_memory_mb,
+                "max_execution_seconds": self.resource_limits.max_execution_seconds.0,
+            },
+            "input_data": input,
+            "secrets_ref": null,
+            "response_format": "Json",
+            "payer_account_id": env::current_account_id(),
+            "params": null,
+        });
+        Promise::new(self.outlayer_id.clone())
+            .function_call_weight(
+                "request_execution".to_string(),
+                args.to_string().into_bytes(),
+                self.observation_deposit,
+                GAS_OUTLAYER_STATIC,
+                GasWeight(1),
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_ON_ENCLAVE)
+                    .with_unused_gas_weight(0)
+                    .on_enclave_result(U64(pending_id)),
+            )
+    }
+
+    /// Callback for enclave requests. The same gates as `on_observation`: an id already used
+    /// fails with `ERR_UNKNOWN_REQUEST`, any caller but this contract with `ERR_NOT_OUTLAYER`.
+    /// A clearing result is checked before it is applied: every index exists once, both sides
+    /// fill the same quantity at one price in 1..=99, and no bidder pays more than its escrow.
+    /// Anything else records nothing and the auction can be cleared again.
+    pub fn on_enclave_result(&mut self, pending_id: U64) -> bool {
+        let id = pending_id.0;
+        if id < self.next_pending_id && !self.enclave_pending.contains_key(&id) {
+            env::panic_str("ERR_UNKNOWN_REQUEST");
+        }
+        if env::predecessor_account_id() != env::current_account_id() {
+            env::panic_str("ERR_NOT_OUTLAYER");
+        }
+        let kind = self.enclave_pending.remove(&id).unwrap_or_else(|| env::panic_str("ERR_UNKNOWN_REQUEST"));
+        require!(env::promise_results_count() == 1, "ERR_UNKNOWN_REQUEST");
+        let out: Option<EnclaveOutput> = match env::promise_result_checked(0, MAX_ENCLAVE_OUTPUT) {
+            Ok(bytes) => serde_json::from_slice(&bytes).ok().flatten(),
+            Err(_) => None,
+        };
+        match kind {
+            EnclavePending::Key => {
+                self.key_pending = None;
+                let key = out.filter(|o| o.op == "pubkey").and_then(|o| o.x25519_pubkey).filter(|k| hex_decode_32(k).is_some());
+                match key {
+                    Some(k) if self.enclave_pubkey.is_none() => {
+                        let k = k.to_lowercase();
+                        emit("enclave_key_set", json!({"pending_id": pending_id, "x25519_pubkey": k}));
+                        self.enclave_pubkey = Some(k);
+                        true
+                    }
+                    _ => {
+                        emit("enclave_rejected", json!({"pending_id": pending_id, "reason": "no_key"}));
+                        false
+                    }
+                }
+            }
+            EnclavePending::Clear { market_id } => {
+                self.clearing.remove(&market_id);
+                let Some(out) = out else { return self.enclave_reject(market_id, id, "enclave_no_output") };
+                match self.apply_private_clearing(market_id, &out) {
+                    Ok(()) => true,
+                    Err(reason) => self.enclave_reject(market_id, id, reason),
+                }
+            }
+        }
+    }
+
+    fn enclave_reject(&mut self, market_id: u64, pending_id: u64, reason: &str) -> bool {
+        emit("enclave_rejected", json!({"market_id": U64(market_id), "pending_id": U64(pending_id), "reason": reason}));
+        false
+    }
+
+    fn apply_private_clearing(&mut self, market_id: u64, out: &EnclaveOutput) -> Result<(), &'static str> {
+        let mut m = self.market(market_id);
+        if m.status != MarketStatus::Auction {
+            return Err("market_not_in_auction");
+        }
+        if out.op != "clear" || out.market_id.as_deref() != Some(market_id.to_string().as_str()) {
+            return Err("wrong_market");
+        }
+        let n = m.bid_count as usize;
+        let mut bids: Vec<Bid> = (0..m.bid_count).map(|i| self.bids.get(&(market_id, i)).cloned().unwrap()).collect();
+        let mut seen = vec![false; n];
+        let (mut long_qty, mut short_qty) = (0u128, 0u128);
+        let price = out.price_cents;
+        if !out.fills.is_empty() && !matches!(price, Some(1..=99)) {
+            return Err("bad_price");
+        }
+        for f in &out.fills {
+            let i = f.index as usize;
+            if i >= n || seen[i] || f.filled_qty == 0 {
+                return Err("bad_fill_index");
+            }
+            seen[i] = true;
+            let unit_cents = match f.side {
+                Side::Long => price.unwrap() as u128,
+                Side::Short => 100 - price.unwrap() as u128,
+            };
+            let cost = f.filled_qty as u128 * unit_cents * math::CENT_MICROS as u128;
+            if cost > bids[i].escrow {
+                return Err("fill_exceeds_escrow");
+            }
+            match f.side {
+                Side::Long => long_qty += f.filled_qty as u128,
+                Side::Short => short_qty += f.filled_qty as u128,
+            }
+            bids[i].filled_qty = f.filled_qty;
+            bids[i].cost = cost;
+        }
+        if long_qty != short_qty || out.matched.map(|q| q as u128) != Some(long_qty) {
+            return Err("unbalanced_fills");
+        }
+        for f in &out.fills {
+            let b = &bids[f.index as usize];
+            self.add_claim(market_id, f.side, &b.bidder.clone(), f.filled_qty as u128 * CLAIM_UNITS);
+        }
+        for (i, b) in bids.into_iter().enumerate() {
+            let refund = b.escrow - b.cost;
+            if refund > 0 {
+                let cur = self.refunds.get(&b.bidder).copied().unwrap_or(0);
+                self.refunds.insert(b.bidder.clone(), cur + refund);
+            }
+            if b.filled_qty > 0 {
+                self.bids.insert((market_id, i as u32), b);
+            }
+        }
+        let minted = long_qty * CLAIM_UNITS;
+        m.pairs += minted;
+        m.collateral += minted;
+        m.opening_price_cents = if long_qty > 0 { price } else { None };
+        m.status = MarketStatus::Open;
+        emit(
+            "auction_cleared",
+            json!({"market_id": U64(market_id), "price_cents": m.opening_price_cents, "matched": U128(minted),
+                   "bids": m.bid_count, "private": true, "valid": out.valid, "invalid": out.invalid,
+                   "outlayer_request": out.request_id}),
+        );
+        self.save(m);
+        Ok(())
+    }
+
+    /// Anyone, if a market is still in its auction after `void_after` (for example, the enclave
+    /// never answered): every escrow is refunded and the market is void with no claims.
+    pub fn abandon_auction(&mut self, market_id: U64) {
+        let mut m = self.market(market_id.0);
+        require!(m.status == MarketStatus::Auction, "ERR_NOT_IN_AUCTION");
+        require!(env::block_timestamp() >= m.void_after, "ERR_TOO_EARLY");
+        require!(!self.clearing.contains_key(&market_id.0), "ERR_CLEARING_PENDING");
+        for i in 0..m.bid_count {
+            let b = self.bids.get(&(market_id.0, i)).cloned().unwrap();
+            let cur = self.refunds.get(&b.bidder).copied().unwrap_or(0);
+            self.refunds.insert(b.bidder.clone(), cur + b.escrow);
+        }
+        m.status = MarketStatus::Void;
+        emit("auction_abandoned", json!({"market_id": market_id, "bids": m.bid_count}));
         self.save(m);
     }
 
@@ -805,6 +1141,7 @@ impl Contract {
                     revealed: b.revealed.clone(),
                     filled_qty: U64(b.filled_qty),
                     cost: U128(b.cost),
+                    ciphertext: self.ciphertexts.get(&(market_id.0, i)).cloned(),
                 })
             })
             .collect()
@@ -820,6 +1157,9 @@ impl Contract {
         match parsed {
             TransferMsg::MintPair { market_id } => self.internal_mint_pair(market_id.0, &sender_id, amount.0),
             TransferMsg::CommitBid { market_id, hash } => self.internal_commit_bid(market_id.0, &sender_id, amount.0, &hash),
+            TransferMsg::CommitSealed { market_id, ciphertext } => {
+                self.internal_commit_sealed(market_id.0, &sender_id, amount.0, &ciphertext)
+            }
         }
         PromiseOrValue::Value(U128(0))
     }
@@ -861,6 +1201,52 @@ impl Contract {
         self.sub_claim(market_id.0, side, &sender, amount.0);
         self.add_claim(market_id.0, side, &receiver_id, amount.0);
         emit("claim_transfer", json!({"market_id": market_id, "side": side, "from": sender, "to": receiver_id, "amount": amount}));
+    }
+
+    /// Moves claims to a contract and tells it, like NEP-141 `ft_transfer_call`: calls
+    /// `receiver_id.on_claim_transfer(sender_id, market_id, side, amount, msg) -> U128` (the amount
+    /// it does not keep) and returns the unused part to the sender. Lets a claim become a NEP-141
+    /// token (`contracts/claim-token`), for example to trade it in a Rhea pool.
+    pub fn claim_transfer_call(&mut self, receiver_id: AccountId, market_id: U64, side: Side, amount: U128, msg: String) -> Promise {
+        let sender = env::predecessor_account_id();
+        self.claim_transfer(receiver_id.clone(), market_id, side, amount);
+        Promise::new(receiver_id.clone())
+            .function_call(
+                "on_claim_transfer".to_string(),
+                json!({"sender_id": sender, "market_id": market_id, "side": side, "amount": amount, "msg": msg}).to_string().into_bytes(),
+                NearToken::from_yoctonear(0),
+                GAS_ON_CLAIM_TRANSFER,
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_RESOLVE_CLAIM_TRANSFER)
+                    .resolve_claim_transfer(sender, receiver_id, market_id, side, amount),
+            )
+    }
+
+    /// Returns the unused part of a `claim_transfer_call` (all of it if the receiver failed),
+    /// limited to what the receiver still holds. Returns the amount the receiver kept.
+    #[private]
+    pub fn resolve_claim_transfer(
+        &mut self,
+        sender_id: AccountId,
+        receiver_id: AccountId,
+        market_id: U64,
+        side: Side,
+        amount: U128,
+        #[callback_result] unused: Result<U128, PromiseError>,
+    ) -> U128 {
+        let unused = match unused {
+            Ok(u) => u.0.min(amount.0),
+            Err(_) => amount.0,
+        };
+        let back = unused.min(self.claim(market_id.0, side, &receiver_id));
+        if back > 0 {
+            self.sub_claim(market_id.0, side, &receiver_id, back);
+            self.add_claim(market_id.0, side, &sender_id, back);
+            emit("claim_transfer", json!({"market_id": market_id, "side": side, "from": receiver_id, "to": sender_id, "amount": U128(back), "memo": "refund"}));
+        }
+        U128(amount.0 - back)
     }
 
     pub fn claim_balance_of(&self, account_id: AccountId, market_id: U64, side: Side) -> U128 {
@@ -1243,6 +1629,8 @@ impl Contract {
             observation_budget: U128(self.budget()),
             next_pending_id: U64(self.next_pending_id),
             next_market_id: U64(self.next_market_id),
+            enclave: self.enclave.clone(),
+            enclave_pubkey: self.enclave_pubkey.clone(),
         }
     }
 

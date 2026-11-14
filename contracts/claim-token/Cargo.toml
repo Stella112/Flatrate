@@ -1,0 +1,15 @@
+[package]
+name = "claim-token"
+version = "0.1.0"
+edition = "2021"
+description = "Flatrate claims as a NEP-141 token: one token = one Long (or Short) claim of one market"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+near-contract-standards = { workspace = true }
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }

@@ -3,7 +3,8 @@ import { useRef, useState } from "react";
 import { href, useApp } from "../App";
 import { PriceChart } from "../Chart";
 import { ONE } from "../config";
-import { getBids, getMarket, getSlotInfo } from "../data";
+import { getBids, getConfig, getMarket, getSlotInfo } from "../data";
+import { sealBid } from "../sealed";
 import { bidHash, callFlat, flat, randomSalt, transferCall, type Guest } from "../near";
 import { longPayout, parseUnits, phase, shortAcct, statusLabel, timeLeft, units, usd, utc } from "../format";
 import type { Market, Side } from "../types";
@@ -103,7 +104,8 @@ export function MarketPage({ id }: { id: string }) {
         </p>
       </Card>
 
-      {(mk.status === "Auction" || sawAuction.current) && <AuctionCard mk={mk} ph={ph} onDone={reloadAll} />}
+      {(mk.status === "Auction" || sawAuction.current) &&
+        (INDEX.privateAuction ? <PrivateAuctionCard mk={mk} ph={ph} onDone={reloadAll} /> : <AuctionCard mk={mk} ph={ph} onDone={reloadAll} />)}
 
       <Card title="Sealed bids">
         {!bids.data?.length ? (
@@ -128,7 +130,13 @@ export function MarketPage({ id }: { id: string }) {
                     <td className="mono">{shortAcct(b.bidder)}</td>
                     <td className="mono">{b.hash.slice(0, 12)}…</td>
                     <td>{units(b.escrow)}</td>
-                    <td>{b.revealed ? `${b.revealed.side} ${b.revealed.qty} @ ${b.revealed.limit_cents}¢` : "sealed"}</td>
+                    <td>
+                      {b.revealed
+                        ? `${b.revealed.side} ${b.revealed.qty} @ ${b.revealed.limit_cents}¢`
+                        : b.ciphertext
+                          ? <span title={b.ciphertext}>sealed to enclave ({b.ciphertext.length} chars)</span>
+                          : "sealed"}
+                    </td>
                     <td>{mk.status === "Auction" ? "—" : `${b.filled_qty} (paid ${units(b.cost)})`}</td>
                   </tr>
                 ))}
@@ -258,6 +266,128 @@ function AuctionCard({ mk, ph, onDone }: { mk: Market; ph: string; onDone: () =>
         </>
       )}
       {demo && <p className="muted small">Actions are disabled in scripted demo mode.</p>}
+      {act.view}
+    </Card>
+  );
+}
+
+type SavedSealed = { market: string; side: Side; qty: string; limit: number; escrow: string; at: number };
+const sealedKey = (g: Guest) => `flatrate.sealed.${g.accountId}`;
+function loadSealed(g: Guest): SavedSealed[] {
+  try {
+    return JSON.parse(localStorage.getItem(sealedKey(g)) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+/** Private auction: the bid is sealed in the browser to the enclave key; no salt, no reveal. */
+function PrivateAuctionCard({ mk, ph, onDone }: { mk: Market; ph: string; onDone: () => void }) {
+  const { guest, demo } = useApp();
+  const cfg = useAsync(() => getConfig(false), []);
+  const [side, setSide] = useState<Side>("Long");
+  const [qty, setQty] = useState("10");
+  const [limit, setLimit] = useState("50");
+  const [extra, setExtra] = useState("0");
+  const [saved, setSaved] = useState<SavedSealed[]>(() => loadSealed(guest).filter((b) => b.market === mk.id));
+  const act = useAction();
+  const key = cfg.data?.enclave_pubkey ?? null;
+
+  const q = /^\d+$/.test(qty) ? BigInt(qty) : 0n;
+  const l = Number(limit);
+  const ex = parseUnits(extra) ?? 0n;
+  const valid = q > 0n && Number.isInteger(l) && l >= 1 && l <= 99 && !!key;
+  const escrow = valid ? q * BigInt(l) * 10_000n + ex : 0n;
+
+  const commit = () =>
+    act.run(async () => {
+      const ciphertext = sealBid(key!, { market_id: mk.id, bidder: guest.accountId, side, qty: Number(q), limit_cents: l });
+      const rec: SavedSealed = { market: mk.id, side, qty: q.toString(), limit: l, escrow: escrow.toString(), at: Date.now() };
+      try {
+        const all = loadSealed(guest).concat(rec);
+        localStorage.setItem(sealedKey(guest), JSON.stringify(all));
+        setSaved(all.filter((x) => x.market === mk.id));
+      } catch {
+        /* only a convenience copy: the enclave needs nothing from this browser */
+      }
+      return transferCall(guest, escrow, { action: "commit_sealed", market_id: mk.id, ciphertext });
+    }, onDone);
+
+  const canClear = mk.status === "Auction" && ph !== "commit";
+  return (
+    <Card
+      title="Private opening auction (cleared in an OutLayer enclave)"
+      right={
+        <small className="muted">
+          {ph === "commit" && `commits close in ${timeLeft(mk.auction_commit_end)}`}
+          {canClear && "ready to clear in the enclave"}
+          {mk.status !== "Auction" && (mk.opening_price_cents !== null ? `cleared at ${mk.opening_price_cents}¢` : "cleared, nothing matched")}
+        </small>
+      }
+    >
+      <p className="small">
+        Your bid is encrypted in this browser to the enclave's key and only the ciphertext goes on-chain. There is no reveal:
+        after the commit window anyone presses "Clear in the enclave", the contract sends the sealed bids to OutLayer, and the
+        enclave opens them, runs the same uniform-price clearing and returns only the filled bids. Limits and unfilled bids are
+        never published. Unused escrow is refunded.
+      </p>
+      <p className="muted small">
+        Enclave key{" "}
+        <span className="mono break">{key ?? (cfg.loading ? "…" : "not set yet")}</span>
+        {cfg.data?.enclave && (
+          <>
+            {" "}· project <span className="mono">{cfg.data.enclave.project_id}</span> · pinned version{" "}
+            <span className="mono break">{cfg.data.enclave.version_key}</span>
+          </>
+        )}
+      </p>
+      {ph === "commit" && (
+        <div className="form">
+          <Field label="Side">
+            <select value={side} onChange={(e) => setSide(e.target.value as Side)}>
+              <option>Long</option>
+              <option>Short</option>
+            </select>
+          </Field>
+          <Field label="Claims">
+            <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="numeric" />
+          </Field>
+          <Field label="Limit (¢ per claim)">
+            <input value={limit} onChange={(e) => setLimit(e.target.value)} inputMode="numeric" />
+          </Field>
+          <Field label="Extra deposit (fUSD)" hint="optional: hides the bid size">
+            <input value={extra} onChange={(e) => setExtra(e.target.value)} inputMode="decimal" />
+          </Field>
+          <div className="form-actions">
+            <button disabled={demo || act.busy || !valid} onClick={commit}>
+              {act.busy ? "Sending…" : `Seal and commit bid (escrow ${units(escrow)} fUSD)`}
+            </button>
+          </div>
+        </div>
+      )}
+      {canClear && (
+        <button
+          disabled={demo || act.busy}
+          // The transaction stays open until the enclave answers (yield/resume); return once included.
+          onClick={() => act.run(() => callFlat(guest, "clear_auction", { market_id: mk.id }, { gasTgas: 300, waitUntil: "INCLUDED_FINAL" }), onDone)}
+        >
+          Clear in the enclave
+        </button>
+      )}
+      {saved.length > 0 && (
+        <>
+          <h3>Your sealed bids (kept only in this browser)</h3>
+          <ul className="saved">
+            {saved.map((b) => (
+              <li key={b.at}>
+                <span>
+                  {b.side} {b.qty} @ {b.limit}¢, escrow {units(b.escrow)} fUSD
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {act.view}
     </Card>
   );

@@ -1,0 +1,38 @@
+[package]
+name = "flatrate-auction-enclave"
+version = "0.1.0"
+edition = "2021"
+description = "OutLayer WASI component: opens bids encrypted to the enclave and clears the opening auction inside it"
+
+# Built separately for wasm32-wasip2; not part of the contracts workspace.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "flatrate-auction-enclave"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+flatrate-shared = { path = "../shared" }
+# NaCl `box` (X25519 + XSalsa20-Poly1305), the format tweetnacl's `nacl.box` produces in the browser.
+crypto_box = { version = "0.9", default-features = false, features = ["salsa20", "alloc"] }
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+# The signing-key host functions (`outlayer:signing-keys`), generated from `wit/signing-keys.wit`,
+# a copy of near-outlayer `worker/wit/deps/signing-keys.wit` (the same version the
+# `signing-key-probe` example pins).
+wit-bindgen = "0.36"
+
+[dev-dependencies]
+crypto_box = { version = "0.9", default-features = false, features = ["salsa20", "alloc", "getrandom"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1

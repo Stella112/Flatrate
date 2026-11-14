@@ -1,0 +1,12 @@
+{
+  "display": {
+    "name": "Flatrate private auction"
+  },
+  "operations": ["pubkey", "clear"],
+  "capabilities": {
+    "network": []
+  },
+  "signing_keys": [
+    {"path": "auction", "type": "ed25519", "caller": "predecessor"}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "note": "FIXTURE: sealed in Node with tweetnacl 1.0.3 (scripts/seal-bid.mjs format) to the key derived from a 64-byte signature of 0x01 bytes; opened by auction-enclave tests",
+  "signature_byte": 1,
+  "x25519_pubkey": "1cbb2e8581a423e8b1c9036381a8532b7de16a1c886f64d145f5a66b5bd07d20",
+  "plain": {
+    "market_id": "20",
+    "bidder": "alice.testnet",
+    "side": "Long",
+    "qty": 10,
+    "limit_cents": 55
+  },
+  "ciphertext": "kj3ZeUNxaBHP8wi7nPPQP5+PFnQDovK+r+swjyKdaRXlB9L/j2A9azU52si6j5U/2vCO+rXuoPC7d0T7ih+ytOp7hrxE1HCn41Qx91vDO5wORaP9kc2jRv5nDXZKCWjYJbuA6MhHm/wPvnTWGtGxF3TSOP1y8C3Jc/EAWGn4m+GJGx5SvZHyCfpCoWsg2LPMqnjeYrd2OF6wJdI="
+}

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["shared", "contracts/fusd", "contracts/flatrate", "contracts/mock-outlayer"]
-exclude = ["oracle"]
+members = ["shared", "contracts/fusd", "contracts/flatrate", "contracts/mock-outlayer", "contracts/claim-token"]
+exclude = ["oracle", "oracle-tokens", "auction-enclave"]
 
 [workspace.dependencies]
 near-sdk = "5.30.1"
