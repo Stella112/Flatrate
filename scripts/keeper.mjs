@@ -21,6 +21,7 @@
 //         KEEPER_ROLL (comma list of templates to roll, default "WEEKLY"; "" to roll none)
 
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const FLATRATE_ID = process.env.FLATRATE_ID || "flatrate.flatrate-maris.testnet";
 const RPC = process.env.NEAR_RPC || "https://rpc.testnet.fastnear.com";
@@ -134,14 +135,42 @@ async function observe(m) {
   log(`market ${m.id} slot ${s.current_slot}: request_observation tx ${r.tx || "-"} ${r.err || "included; result arrives by callback"}`);
 }
 
+// Last clear attempt per market (ms), kept between cron runs in a small file per contract.
+const CLEAR_RETRY_MIN = Number(process.env.CLEAR_RETRY_MIN || 10);
+const CLEAR_STATE = `${process.env.HOME || process.env.USERPROFILE || "."}/.flatrate-keeper-clear-${FLATRATE_ID}.json`;
+function clearState() {
+  try {
+    return JSON.parse(readFileSync(CLEAR_STATE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function clearBackoff(id) {
+  const t = clearState()[id];
+  return t !== undefined && Date.now() - t < CLEAR_RETRY_MIN * 60_000;
+}
+function rememberClearAttempt(id) {
+  const s = clearState();
+  s[id] = Date.now();
+  try {
+    writeFileSync(CLEAR_STATE, JSON.stringify(s));
+  } catch {
+    /* no state: retries every pass */
+  }
+}
+
 async function pass() {
   const nowNs = BigInt(Date.now()) * 1_000_000n;
   const markets = await view("list_markets", { limit: 100 });
   for (const m of markets) {
-    if (m.status === "Auction" && nowNs >= BigInt(m.auction_reveal_end)) {
+    if (m.status === "Auction" && nowNs >= BigInt(m.auction_reveal_end) && !clearBackoff(m.id)) {
       const r = call("clear_auction", { market_id: m.id }, 300);
-      log(`market ${m.id}: clear_auction tx ${r.tx} ${r.err || ""}`);
-      m.status = r.err ? m.status : "Open";
+      const cleared = r.events.some((e) => e.event === "auction_cleared");
+      log(`market ${m.id}: clear_auction tx ${r.tx} ${r.err || (cleared ? "cleared" : "sent; a private auction clears by enclave callback")}`);
+      // A private auction answers later through the enclave, and fails while OutLayer is down:
+      // wait CLEAR_RETRY_MIN before trying the same market again instead of paying every minute.
+      if (!cleared) rememberClearAttempt(m.id);
+      m.status = cleared ? "Open" : m.status;
     }
     if (m.status === "Open" && nowNs >= BigInt(m.period_start) && nowNs < BigInt(m.period_end)) {
       await observe(m);

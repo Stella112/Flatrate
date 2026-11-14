@@ -100,6 +100,9 @@ while IFS=$'\t' read -r c s e; do [ -n "$c" ] && row "$c" "$s" "$e"; done < "$LO
 FLATRATE_ID=tokens.flatrate-maris.testnet ORACLE_DIR=oracle-tokens CHECK_PREFIX="[tokens] " \
   node scripts/verify-chain.mjs ${TOKENS_HASH:+--oracle-hash "$TOKENS_HASH"} > "$LOG/chain-tokens.log" 2>&1
 while IFS=$'\t' read -r c s e; do [ -n "$c" ] && row "$c" "$s" "$e"; done < "$LOG/chain-tokens.log"
+FLATRATE_ID=sealed.flatrate-maris.testnet CHECK_PREFIX="[sealed] " \
+  node scripts/verify-chain.mjs ${ORACLE_HASH:+--oracle-hash "$ORACLE_HASH"} > "$LOG/chain-sealed.log" 2>&1
+while IFS=$'\t' read -r c s e; do [ -n "$c" ] && row "$c" "$s" "$e"; done < "$LOG/chain-sealed.log"
 
 # 5. table
 echo

@@ -89,6 +89,20 @@ try {
     }
   }
 
+  // 2b. A private-auction deployment pins its enclave version, registered on OutLayer, and holds the enclave's key.
+  if (cfg.enclave) {
+    try {
+      const ver = await view(OUTLAYER_ID, "get_version", { project_id: cfg.enclave.project_id, version_key: cfg.enclave.version_key });
+      add(
+        `enclave version ${cfg.enclave.version_key.slice(0, 10)}… exists`,
+        ver && ver.wasm_hash === cfg.enclave.version_key ? "PASS" : "FAIL",
+        `${cfg.enclave.project_id}, wasm_hash ${ver?.wasm_hash?.slice(0, 16)}…; enclave key ${cfg.enclave_pubkey ? cfg.enclave_pubkey.slice(0, 16) + "…" : "not set"}`,
+      );
+    } catch (e) {
+      add(`enclave version ${cfg.enclave.version_key.slice(0, 10)}… exists`, "FAIL", String(e).slice(0, 120));
+    }
+  }
+
   // 3. Every settled market pays what the payoff of its filled slots says; a void one had too few.
   for (const m of markets) {
     const obs = m.observations.map((o) => BigInt(o.price_micros));
