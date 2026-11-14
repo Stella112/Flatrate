@@ -106,6 +106,20 @@ export function parseOutcome(r: any): TxResult {
 }
 
 /** Full receipt tree of a past transaction (archival node). */
+/** A finished transaction, through this site's caching proxy of the RPC node (web/api/tx.js); falls back to the nodes directly. */
+export async function txStatusFinished(hash: string, sender: string): Promise<TxResult> {
+  try {
+    const r = await fetch(`/api/tx?hash=${encodeURIComponent(hash)}&signer=${encodeURIComponent(sender)}`);
+    if (r.ok) {
+      const body = await r.json();
+      if (body && body.result) return parseOutcome(body.result);
+    }
+  } catch {
+    /* no proxy (local dev) or it failed: ask the nodes directly */
+  }
+  return txStatus(hash, sender);
+}
+
 export async function txStatus(hash: string, sender: string): Promise<TxResult> {
   const params = { tx_hash: hash, sender_account_id: sender, wait_until: "FINAL" };
   // The archival node rate-limits bursts (its 429 carries no CORS header, so the browser sees a network

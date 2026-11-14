@@ -43,7 +43,7 @@ export function ProofPage() {
             setTxMap((prev) => new Map(prev).set(pid, r));
           }
         };
-        await Promise.all([worker(), worker()]);
+        await Promise.all(Array.from({ length: 6 }, worker));
       } catch (e) {
         if (!cancelled) setTxError(e instanceof Error ? e.message : String(e));
       } finally {

@@ -1,9 +1,9 @@
 // Finds the transaction behind each on-chain observation and reads OutLayer's output from it.
 // The list of transactions comes from the public NearBlocks API (v3, no key); every result is then
-// read from an archival RPC node and matched to contract state by pending id, so the page shows
+// read from an RPC node (through web/api/tx.js, which passes the node's answer on unchanged and caches it) and matched to contract state by pending id, so the page shows
 // only what the chain says.
 import { FLATRATE_ID, NEARBLOCKS_API } from "./config";
-import { txStatus } from "./near";
+import { txStatusFinished } from "./near";
 import type { Attestation, OracleOutput } from "./types";
 
 export const OUTLAYER_API = "https://testnet-api.outlayer.ai";
@@ -54,7 +54,7 @@ export async function readObservationTxs(list: { hash: string; signer: string }[
 }
 
 export async function readObservationTx(hash: string, signer: string): Promise<ObservationTx> {
-  const r = await txStatus(hash, signer);
+  const r = await txStatusFinished(hash, signer);
   const req = r.events.find((e) => e.event === "observation_requested");
   const rec = r.events.find((e) => e.event === "observation_recorded");
   const rej = r.events.find((e) => e.event === "observation_rejected");
