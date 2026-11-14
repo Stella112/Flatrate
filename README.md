@@ -6,6 +6,33 @@ A second deployment of the same contract (extra 2) runs markets on an LLM token 
 
 Other submission by the same builder: **Facedown**, https://github.com/Stella112/facedown
 
+![Landing page: lock next week's AI compute bill](docs/screens/landing.jpg)
+
+## What is real, and what is not
+
+Real, on NEAR testnet (each link is a transaction; every row is in [CLAIMS.md](CLAIMS.md)):
+
+- **A Cover Note pays whoever holds it.** Claims wrapped in a NEP-171 note [G2WH2YLY](https://testnet.nearblocks.io/txns/G2WH2YLYGQRgzBAGSR8nBGw2jADWDrjy5iAJYbViY1Wx), transferred to another account [FSJ3gyc1](https://testnet.nearblocks.io/txns/FSJ3gyc15xd8osW8AMeCYQ5EzrFsA1hruHAXoVHzNXFK), redeemed by the new holder [2mrCGSf9](https://testnet.nearblocks.io/txns/2mrCGSf9E1ctpNR878N3NbcQbUaFRYAMFagCJ8qwixR7).
+- **Markets settle on real GPU prices.** Five public price APIs, fetched by a pinned program inside OutLayer, one price per time slot; settle [H2HUitUD](https://testnet.nearblocks.io/txns/H2HUitUDJG2TUC8rvKWbx3HWF1fRVMv8Dex5fsoW5bLj), guest redeem [BGEz8gGT](https://testnet.nearblocks.io/txns/BGEz8gGTrpa578cgQDLTCyvXntdaJx9ZMR41GsiXM5ZH). Every price, with its OutLayer request and attestation check: [Proof page](https://flatrate-gpu.vercel.app/#/proof).
+- **Nobody controls the contract.** It has no access keys; the four attack buttons on the Proof page fail on-chain.
+- **Extras that ran:** a sealed auction cleared inside the OutLayer enclave ([AcNrMc8c](https://testnet.nearblocks.io/txns/AcNrMc8cDLunZBXUiAJrpfsem4AKE4Pxu2snFP7x98vW), [EndXUXun](https://testnet.nearblocks.io/txns/EndXUXunmJm9a5LisbaoaaGkfXPejNuztRMMn5uc3vFS)); claims swapped in a Rhea pool ([9ZnA1WBW](https://testnet.nearblocks.io/txns/9ZnA1WBWo5mpS85QeSpZ7Dm4Tp3P1YsVZvwQrjYEWU8C)); a NEAR account signed a Base Sepolia transfer through chain signatures ([0xa9924054](https://sepolia.basescan.org/tx/0xa9924054d5f471a131709ac2e8d5f288f73d8446a9622256ac2ed0d496209898)).
+
+Seeded, simulated or not done:
+
+- **Every bid and all Rhea liquidity come from our own accounts.** There are no outside traders yet.
+- **Testnet only.** fUSD is a test token with a public faucet.
+- **The private-auction markets settled void.** OutLayer testnet failed most runs on 2026-11-14, so they never got enough prices.
+- **Paying in from another chain is a quote only.** 1Click and Aurora have no testnet.
+- **The hedging agent commits bids with a full-access key**, because function-call keys cannot attach the 1 yoctoNEAR deposit a token transfer needs. Its other calls use a key limited to the flatrate contract.
+
+Details for each are under [Limitations](#limitations).
+
+| App: markets, lifecycle, guest account | Proof: how prices get on-chain, attack buttons |
+|---|---|
+| ![App markets page](docs/screens/app-markets.jpg) | ![Proof page](docs/screens/proof.jpg) |
+
+More screenshots of each step (guest account, bids, Cover Note, settlement, attacks) are in [docs/screens/](docs/screens/).
+
 ## Try it
 
 1. Open **https://flatrate-gpu.vercel.app/** for the landing page (the story, a payoff calculator and live testnet numbers), then **https://flatrate-gpu.vercel.app/#/app** for the app. In the app's sidebar click "Create guest account": the page makes a key in your browser and a sponsor sends 0.1 testnet NEAR and 100 fUSD to its account. No wallet needed. The sidebar switches between the three contracts (H100 GPU-hour, LLM tokens, H100 private auction).
@@ -68,8 +95,8 @@ Other submission by the same builder: **Facedown**, https://github.com/Stella112
 
 ## Tracks
 
+- **NFTs That Do Something**: a Cover Note is a transferable claim on a future payout; whoever holds it at settlement is paid. On testnet a note was transferred and redeemed by its new holder.
 - **Unstoppable DeFi**: a fully collateralised two-sided market with no admin price setting, no admin settlement override and public market rolling.
-- **NFTs That Do Something**: a Cover Note is a transferable claim on a future payout; whoever holds it at settlement is paid.
 - **Agent Economy**: `scripts/agent/hedge-agent.mjs` reads a usage forecast, sizes a Long hedge (GPU-hours x band x hedge ratio), prices it from the last settled average, and runs the auction to redemption on its own account. It hedged DEMO market 13 on testnet.
 - **Autonomous Business**: the contract has no access keys; markets are rolled, cleared, priced and settled by public calls. A keeper holding only a function-call key runs them, and anyone can run the same keeper. DEMO market 14 was rolled by a fresh guest and cleared, priced and settled by the keeper with no operator action.
 - **Privacy & Private AI**: bids stay sealed until the reveal window, and prices come from a pinned program run by OutLayer in a TEE, with an attestation per price.
@@ -95,14 +122,14 @@ make oracle-repro    # build oracle/ twice in OutLayer's pinned compiler image; 
 
 - **Testnet only, test stablecoin.** fUSD has a public faucet. No mainnet contracts.
 - **Both sides seeded by us.** The bids in the recorded markets come from our own accounts (the guest in market 11 bid on both sides); there are no outside traders.
-- **Revealed bids are public.** Bids are hidden while bidding, but the reveal makes them public before clearing. Clearing inside an enclave is not built.
+- **Revealed bids are public on the main contract.** Bids are hidden while bidding, but the reveal makes them public before clearing. Only the separate private-auction contract (`sealed.flatrate-maris.testnet`) clears bids inside an enclave without revealing them.
 - **The feed is only as good as its sources.** Five public APIs; Shadeform aggregates other clouds, including Verda, so they are not fully independent. A source can change its API; a run needs at least 3 working sources.
 - **The contract does not verify a TEE attestation itself.** It trusts the OutLayer contract and the pinned code version. The Proof page and `make verify` fetch OutLayer's attestation record for each price and compare its wasm, input and output hashes, but do not verify the TDX quote. OutLayer's governance still runs on keys its operators hold (near-outlayer `docs/NON_CUSTODIAL.md`). Intel TDX itself has had published attacks, for example TDXdown (Wilke, Sieck, Eisenbarth, ACM CCS 2024, https://research.uni-luebeck.de/en/publications/tdxdown-single-stepping-and-instruction-counting-attacks-against-/). OutLayer's testnet also had an outage during our first DEMO market (BLOCKERS.md B10); a market without enough slots settles void.
 - **No upgrades.** The contract's keys are deleted, so a bug cannot be fixed; if a price source changes its format, markets settle at the midpoint until a new contract is deployed. The previous version was replaced in place on 2026-11-13 with a `reset` init, before the keys were deleted (the old markets stay on the explorer only).
 - **Paying from another chain is a quote only.** 1Click and Aurora have no testnet; quotes are mainnet prices and nothing is sent. 1Click's quote endpoint timed out at times during the build.
 - **Sponsored guest accounts.** The sponsor pays 0.1 testnet NEAR per guest (a full market lifecycle cost a guest 0.0059 NEAR); its rate limit (3 per IP per hour) is kept in serverless memory, so it is best-effort.
 - **Rhea pool is seeded by us.** Pool 2978 holds liquidity from our own account (10 FRL11 + 5 fUSD); the one swap in it is ours (holder paid 1 fUSD for 1.663192 FRL11, [9ZnA1WBW](https://testnet.nearblocks.io/txns/9ZnA1WBWo5mpS85QeSpZ7Dm4Tp3P1YsVZvwQrjYEWU8C)). Claim tokens exist only for the market a token contract was deployed for.
-- **Private auction: cleared live, not yet settled on prices.** Sealed market 12 cleared inside the OutLayer enclave on testnet ([AcNrMc8c](https://testnet.nearblocks.io/txns/AcNrMc8cDLunZBXUiAJrpfsem4AKE4Pxu2snFP7x98vW): 2 sealed bids, both valid, 20 pairs at 50c, OutLayer request 45595) and recorded prices, but OutLayer testnet failed most executions on 2026-11-14 (BLOCKERS.md B14), so it got 2 of the 3 slots it needed and settled void at 0.50 / 0.50. Earlier, sealed market 10 could not clear during the outage and was abandoned with full refunds. The contract trusts the enclave's fills as OutLayer returns them (it checks escrow and Long/Short balance, not the bids' contents).
+- **Private auction: cleared live, not yet settled on prices.** Sealed market 12 cleared inside the OutLayer enclave on testnet ([AcNrMc8c](https://testnet.nearblocks.io/txns/AcNrMc8cDLunZBXUiAJrpfsem4AKE4Pxu2snFP7x98vW): 2 sealed bids, both valid, 20 pairs at 50c, OutLayer request 45595) and recorded prices, but OutLayer testnet failed most executions on 2026-11-14 (BLOCKERS.md B14), so it got 2 of the 3 slots it needed and settled void at 0.50 / 0.50. Sealed market 13 cleared inside the enclave on the keeper's third attempt ([EndXUXun](https://testnet.nearblocks.io/txns/EndXUXunmJm9a5LisbaoaaGkfXPejNuztRMMn5uc3vFS), 20 pairs at 50c), but only after its price period had ended, so it also settled void. Earlier, sealed market 10 could not clear during the outage and was abandoned with full refunds. The contract trusts the enclave's fills as OutLayer returns them (it checks escrow and Long/Short balance, not the bids' contents).
 - **The agent's commit key is full-access.** A bid is committed through fUSD `ft_transfer_call`, which needs 1 yoctoNEAR attached, and NEAR function-call keys cannot attach a deposit (BLOCKERS.md B11). The agent therefore commits with a full-access key on its own account; its limit is the fUSD it holds and `max_spend_fusd` per bid. Every other agent call uses the flatrate-only key. The contract is keyless, so a deposit-free commit path cannot be added.
 - **Token-price index has one upstream.** All seven prices come from one OpenRouter endpoint, so OpenRouter is a single point of trust for that index; the H100 index uses five separate APIs. The token contract still has its full-access key.
 - **Wallet login not yet used with a real wallet.** The site loads Meteor, MyNearWallet and Intear and starts their sign-in; no transaction has been signed through a wallet yet (the guest flow is the tested path).
