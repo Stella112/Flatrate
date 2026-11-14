@@ -134,6 +134,6 @@ Fixes 3 and 4 were built and type-checked locally (`npm run build`), and the 0.1
 | Repository public, default branch builds from a fresh clone | Yes (builds in WSL from a fresh clone of `6724695`) |
 | `make verify` passes from a fresh clone | Yes on the VPS at `374f7d3`; in this audit all rows pass except the two network rows inside WSL, which pass from Windows |
 | Hosted demo live until at least 25 November | Live now; depends on Vercel, the sponsor balance and the VPS keeper |
-| Demo video from `docs/demo-script.md` | Maris |
+| Demo video from `docs/demo-script.md` | Done: `docs/video/flatrate-demo.mp4` (2:46) |
 | X post (built at the NEAR Hackathon, @NEARProtocol, #NEARHackathon) | Maris |
-| Submission form | Maris |
+| Submission form | Submitted by Maris, 2026-11-14 |

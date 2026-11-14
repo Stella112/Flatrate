@@ -2,7 +2,8 @@ import { href, useApp } from "../App";
 import { EXPLORER_ACCOUNT, FLATRATE_ID, INDEX, OUTLAYER_ID } from "../config";
 import { getConfig, getMarkets } from "../data";
 import { demoOracle } from "../demo";
-import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTxs, type AttestationCheck, type ObservationTx } from "../proof";
+import { useEffect, useRef, useState } from "react";
+import { checkAttestation, listObservationTxs, OUTLAYER_API, readObservationTx, type AttestationCheck, type ObservationTx } from "../proof";
 import { near, usd, utc } from "../format";
 import type { OracleOutput } from "../types";
 import { Card, TxLink, useAsync } from "../ui";
@@ -12,37 +13,67 @@ export function ProofPage() {
   const { demo, step } = useApp();
   const cfg = useAsync(() => getConfig(demo), [demo]);
   const markets = useAsync(() => getMarkets(demo, step), [demo, step]);
-  const txs = useAsync(
-    async (): Promise<Map<string, ObservationTx>> => {
+  // Transactions and attestations are shown as each one arrives (newest first), not after the whole list is read.
+  const [txMap, setTxMap] = useState<Map<string, ObservationTx>>(new Map());
+  const [txLoading, setTxLoading] = useState(true);
+  const [txError, setTxError] = useState<string | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    setTxLoading(true);
+    setTxError(undefined);
+    if (demo) {
       const m = new Map<string, ObservationTx>();
-      if (demo) {
-        for (const [pid, v] of demoOracle(step))
-          m.set(pid, { hash: v.hash, signer: "", pendingId: pid, recorded: true, rejectReason: null, oracle: v.oracle, oracleRaw: null, chargedYocto: v.charged });
-        return m;
+      for (const [pid, v] of demoOracle(step))
+        m.set(pid, { hash: v.hash, signer: "", pendingId: pid, recorded: true, rejectReason: null, oracle: v.oracle, oracleRaw: null, chargedYocto: v.charged });
+      setTxMap(m);
+      setTxLoading(false);
+      return;
+    }
+    setTxMap(new Map());
+    (async () => {
+      try {
+        const list = await listObservationTxs();
+        let next = 0;
+        const worker = async () => {
+          while (!cancelled && next < list.length) {
+            const t = list[next++];
+            const r = await readObservationTx(t.hash, t.signer).catch(() => null);
+            const pid = r?.pendingId;
+            if (cancelled || !r || !pid) continue;
+            setTxMap((prev) => new Map(prev).set(pid, r));
+          }
+        };
+        await Promise.all([worker(), worker()]);
+      } catch (e) {
+        if (!cancelled) setTxError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setTxLoading(false);
       }
-      const list = await listObservationTxs();
-      const read = await readObservationTxs(list);
-      for (const r of read) if (r?.pendingId) m.set(r.pendingId, r);
-      return m;
-    },
-    [demo, step],
-  );
-  const rejected = txs.data ? [...txs.data.values()].filter((t) => !t.recorded) : [];
-  const atts = useAsync(
-    async (): Promise<Map<string, AttestationCheck | null>> => {
-      const out = new Map<string, AttestationCheck | null>();
-      if (demo || !markets.data || !txs.data) return out;
-      for (const m of markets.data) {
-        for (const o of m.observations) {
-          if (!o.outlayer_request) continue;
-          const t = txs.data.get(o.pending_id);
-          out.set(o.pending_id, await checkAttestation(o.outlayer_request, m.oracle_version_key, m.oracle_input, t?.oracleRaw ?? null).catch(() => null));
-        }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [demo, step]);
+  const txs = { data: txMap, loading: txLoading, error: txError };
+  const rejected = [...txMap.values()].filter((t) => !t.recorded);
+
+  const [attMap, setAttMap] = useState<Map<string, AttestationCheck | null>>(new Map());
+  const attAsked = useRef(new Set<string>());
+  useEffect(() => {
+    if (demo || !markets.data) return;
+    for (const m of markets.data) {
+      for (const o of m.observations) {
+        if (!o.outlayer_request || attAsked.current.has(o.pending_id)) continue;
+        const t = txMap.get(o.pending_id);
+        if (!t && txLoading) continue; // wait for the transaction so the output hash can be compared
+        attAsked.current.add(o.pending_id);
+        checkAttestation(o.outlayer_request, m.oracle_version_key, m.oracle_input, t?.oracleRaw ?? null)
+          .catch(() => null)
+          .then((c) => setAttMap((prev) => new Map(prev).set(o.pending_id, c)));
       }
-      return out;
-    },
-    [markets.data, txs.data],
-  );
+    }
+  }, [demo, markets.data, txMap, txLoading]);
+  const atts = { data: attMap, loading: txLoading || attMap.size < attAsked.current.size };
 
   return (
     <>

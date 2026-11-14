@@ -1,5 +1,7 @@
 # Demo script (about 2 minutes)
 
+The recorded demo is [video/flatrate-demo.mp4](video/flatrate-demo.mp4) (2:46): motion graphics built from the testnet transactions in CLAIMS.md, with screenshots of the hosted site. The plan below is the original screen-recording script.
+
 Follows the "Demo and proof" section of [Flatrate-full-description-v2.md](Flatrate-full-description-v2.md). Screen recording of https://flatrate-gpu.vercel.app/ on testnet, recorded in segments from one real DEMO market (3 min commits, 2 min reveals, 8 one-minute slots, settles about 15 minutes after it opens). Two browser windows: window A (bidder 1, buys Long) and window B (bidder 2, sells cover with Short), each with its own guest account.
 
 Before recording: if the latest DEMO market is settled, press "Roll the next DEMO market" in either window (any account can). Keep the keeper running (it fills one price per slot and settles).

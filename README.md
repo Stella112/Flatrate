@@ -4,6 +4,8 @@ Flatrate lets AI teams and agents lock next week's GPU price on NEAR testnet. A 
 
 A second deployment of the same contract (extra 2) runs markets on an LLM token price instead: Llama 3.3 70B output tokens, USD per 1M, the median across seven OpenRouter providers. The site switches between the two with the "H100 GPU-hour" / "LLM tokens" buttons.
 
+**Demo video (2:46):** [docs/video/flatrate-demo.mp4](docs/video/flatrate-demo.mp4). Live site: https://flatrate-gpu.vercel.app/
+
 ![Landing page: lock next week's AI compute bill](docs/screens/landing.jpg)
 
 ## What is real, and what is not
@@ -11,7 +13,7 @@ A second deployment of the same contract (extra 2) runs markets on an LLM token 
 Real, on NEAR testnet (each link is a transaction; every row is in [CLAIMS.md](CLAIMS.md)):
 
 - **A Cover Note pays whoever holds it.** Claims wrapped in a NEP-171 note [G2WH2YLY](https://testnet.nearblocks.io/txns/G2WH2YLYGQRgzBAGSR8nBGw2jADWDrjy5iAJYbViY1Wx), transferred to another account [FSJ3gyc1](https://testnet.nearblocks.io/txns/FSJ3gyc15xd8osW8AMeCYQ5EzrFsA1hruHAXoVHzNXFK), redeemed by the new holder [2mrCGSf9](https://testnet.nearblocks.io/txns/2mrCGSf9E1ctpNR878N3NbcQbUaFRYAMFagCJ8qwixR7).
-- **Markets settle on real GPU prices.** Five public price APIs, fetched by a pinned program inside OutLayer, one price per time slot; settle [H2HUitUD](https://testnet.nearblocks.io/txns/H2HUitUDJG2TUC8rvKWbx3HWF1fRVMv8Dex5fsoW5bLj), guest redeem [BGEz8gGT](https://testnet.nearblocks.io/txns/BGEz8gGTrpa578cgQDLTCyvXntdaJx9ZMR41GsiXM5ZH). Every price, with its OutLayer request and attestation check: [Proof page](https://flatrate-gpu.vercel.app/#/proof).
+- **Markets settle on real GPU prices.** Five public price APIs, fetched by a pinned program inside OutLayer, one price per time slot (37 of the 38 recorded H100 prices used all five sources, one used four); settle [H2HUitUD](https://testnet.nearblocks.io/txns/H2HUitUDJG2TUC8rvKWbx3HWF1fRVMv8Dex5fsoW5bLj), guest redeem [BGEz8gGT](https://testnet.nearblocks.io/txns/BGEz8gGTrpa578cgQDLTCyvXntdaJx9ZMR41GsiXM5ZH). Every price, with its OutLayer request and attestation check: [Proof page](https://flatrate-gpu.vercel.app/#/proof).
 - **Nobody controls the contract.** It has no access keys; the four attack buttons on the Proof page fail on-chain.
 - **Extras that ran:** a sealed auction cleared inside the OutLayer enclave ([AcNrMc8c](https://testnet.nearblocks.io/txns/AcNrMc8cDLunZBXUiAJrpfsem4AKE4Pxu2snFP7x98vW), [EndXUXun](https://testnet.nearblocks.io/txns/EndXUXunmJm9a5LisbaoaaGkfXPejNuztRMMn5uc3vFS)); claims swapped in a Rhea pool ([9ZnA1WBW](https://testnet.nearblocks.io/txns/9ZnA1WBWo5mpS85QeSpZ7Dm4Tp3P1YsVZvwQrjYEWU8C)); a NEAR account signed a Base Sepolia transfer through chain signatures ([0xa9924054](https://sepolia.basescan.org/tx/0xa9924054d5f471a131709ac2e8d5f288f73d8446a9622256ac2ed0d496209898)).
 
@@ -19,7 +21,7 @@ Seeded, simulated or not done:
 
 - **Every bid and all Rhea liquidity come from our own accounts.** There are no outside traders yet.
 - **Testnet only.** fUSD is a test token with a public faucet.
-- **The private-auction markets settled void.** OutLayer testnet failed most runs on 2026-11-14, so they never got enough prices.
+- **The private-auction markets settled void** (each claim paid 0.50 fUSD). OutLayer testnet failed most runs on 2026-11-14, so they never got enough prices.
 - **Paying in from another chain is a quote only.** 1Click and Aurora have no testnet.
 - **The hedging agent commits bids with a full-access key**, because function-call keys cannot attach the 1 yoctoNEAR deposit a token transfer needs. Its other calls use a key limited to the flatrate contract.
 
@@ -35,7 +37,7 @@ More screenshots of each step (guest account, bids, Cover Note, settlement, atta
 
 1. Open **https://flatrate-gpu.vercel.app/** for the landing page (the story, a payoff calculator and live testnet numbers), then **https://flatrate-gpu.vercel.app/#/app** for the app. In the app's sidebar click "Create guest account": the page makes a key in your browser and a sponsor sends 0.1 testnet NEAR and 100 fUSD to its account. No wallet needed. The sidebar switches between the three contracts (H100 GPU-hour, LLM tokens, H100 private auction).
 2. Open a DEMO market. If the latest one is settled, click "Roll the next DEMO market" (anyone can): a new market opens with its band centred on the last settled average. Commit a sealed bid within 3 minutes, reveal within the next 2, then clear. The keeper fills one price per 1-minute slot for 8 minutes; settle and redeem after that.
-3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract.
+3. Open **https://flatrate-gpu.vercel.app/#/proof**: every recorded price with its OutLayer request id, transaction, per-source prices and attestation checks; four buttons that try to break the contract. The transaction and attestation columns fill in row by row, newest market first, over a minute or two.
 4. Open **https://flatrate-gpu.vercel.app/?demo=scripted#/app** for a step-by-step replay of a finished testnet market, with a "Scripted demo" badge and no transactions.
 5. From a clone: `make vendor && make verify` (Linux or macOS, see "Run the checks"). Expect a table and `RESULT: no FAIL` in a few minutes.
 6. From a clone: `make test`. Expect the sandbox suite to end with `test result: ok. 30 passed` (several minutes).
@@ -97,7 +99,7 @@ More screenshots of each step (guest account, bids, Cover Note, settlement, atta
 - **Unstoppable DeFi**: a fully collateralised two-sided market with no admin price setting, no admin settlement override and public market rolling.
 - **Agent Economy**: `scripts/agent/hedge-agent.mjs` reads a usage forecast, sizes a Long hedge (GPU-hours x band x hedge ratio), prices it from the last settled average, and runs the auction to redemption on its own account. It hedged DEMO market 13 on testnet.
 - **Autonomous Business**: the contract has no access keys; markets are rolled, cleared, priced and settled by public calls. A keeper holding only a function-call key runs them, and anyone can run the same keeper. DEMO market 14 was rolled by a fresh guest and cleared, priced and settled by the keeper with no operator action.
-- **Privacy & Private AI**: bids stay sealed until the reveal window, and prices come from a pinned program run by OutLayer in a TEE, with an attestation per price.
+- **Privacy & Private AI**: bids stay sealed until the reveal window, and prices come from a pinned program run by OutLayer in a TEE, with an attestation per price. On the private-auction contract, bids are encrypted to an OutLayer enclave and cleared inside it without being revealed (sealed markets 12 and 13).
 
 ## Run the checks
 
